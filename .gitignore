@@ -1,0 +1,22 @@
+# Build artifacts
+bin/
+obj/
+
+# User-specific files
+*.user
+*.userosscache
+*.suo
+*.swp
+*.tmp
+
+# Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+
+# Logs
+*.log
+
+# OS generated
+.DS_Store
+Thumbs.db
