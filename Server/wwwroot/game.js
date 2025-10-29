@@ -651,7 +651,8 @@
 
     const blendedPlayers = (next.players ?? []).map((player) => {
       const prior = previousPlayers.get(player.connectionId);
-      return blendPlayer(prior, player, smoothing);
+      const isLocal = player.connectionId === myPlayerId;
+      return blendPlayer(prior, player, smoothing, isLocal);
     });
 
     return {
@@ -685,20 +686,25 @@
     };
   }
 
-  function blendPlayer(previous, next, smoothing) {
+  function blendPlayer(previous, next, smoothing, isLocalPlayer = false) {
     if (!previous) {
       return clonePlayer(next);
     }
+
+    const playerSmoothing = isLocalPlayer ? 1 : smoothing;
+    const underlingSmoothing = isLocalPlayer
+      ? Math.min(1, smoothing * 1.5)
+      : smoothing;
 
     return {
       connectionId: next.connectionId,
       displayName: next.displayName,
       teamColor: next.teamColor,
-      leader: blendEntity(previous.leader, next.leader, smoothing),
+      leader: blendEntity(previous.leader, next.leader, playerSmoothing),
       underlings: blendEntityList(
         previous.underlings ?? [],
         next.underlings ?? [],
-        smoothing
+        underlingSmoothing
       ),
     };
   }
