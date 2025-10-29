@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using Microsoft.AspNetCore.SignalR;
@@ -281,7 +282,7 @@ public class GameManager
 
     private static void MaybeNudgeUnderling(Underling underling)
     {
-        if (Random.Shared.NextDouble() < 0.05)
+        if (Random.Shared.NextDouble() < 0.02)
         {
             var direction = RandomUnitVector();
             underling.Velocity = direction * GameConstants.UnderlingSpeed;
@@ -425,6 +426,7 @@ public class GameManager
 
     internal static GameStateDto BuildStateSnapshot(GameRoom room)
     {
+        var serverTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var players = room.Players
             .Select(player => new PlayerStateDto(
                 player.ConnectionId,
@@ -436,7 +438,9 @@ public class GameManager
                     player.Leader.Position.Y,
                     player.Leader.Radius,
                     player.TeamColor,
-                    "leader"),
+                    "leader",
+                    player.Leader.Velocity.X,
+                    player.Leader.Velocity.Y),
                 player.Underlings
                     .Select(u => new EntityStateDto(
                         u.OwnerId,
@@ -444,11 +448,13 @@ public class GameManager
                         u.Position.Y,
                         u.Radius,
                         player.TeamColor,
-                        "underling"))
+                        "underling",
+                        u.Velocity.X,
+                        u.Velocity.Y))
                     .ToList()))
             .ToList();
 
-        return new GameStateDto(room.Id, room.IsActive, players, room.WinnerId);
+        return new GameStateDto(room.Id, room.IsActive, players, room.WinnerId, serverTime);
     }
 
     private static string GenerateRoomId()

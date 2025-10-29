@@ -11,6 +11,6 @@ public static class GameConstants
     public const int MinUnderlingsPerPlayer = 3;
     public const int MaxUnderlingsPerPlayer = 5;
     public static readonly TimeSpan RoomInactivityTimeout = TimeSpan.FromMinutes(10);
-    public const int TargetTickRateMs = 100;
+    public const int TargetTickRateMs = 50;
     public const float TickDeltaSeconds = TargetTickRateMs / 1000f;
 }
