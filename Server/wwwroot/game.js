@@ -6,6 +6,8 @@
   const LEADER_SPEED = 160;
   const LEADER_RADIUS = 18;
   const SMOOTHING_STIFFNESS = 16;
+  const LOCAL_CORRECTION_STIFFNESS = 14;
+  const LOCAL_SNAP_DISTANCE = 120;
 
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
@@ -34,6 +36,8 @@
   const stateBuffer = [];
   let serverTimeOffset = null;
   let localDirectionVector = { x: 0, y: 0 };
+  let localPrediction = null;
+  let lastPredictionTime = performance.now();
   const activeKeyDirections = new Map();
 
   const directionByKey = {
@@ -88,10 +92,16 @@
   function clearStateBuffer(resetRender = false) {
     stateBuffer.length = 0;
     serverTimeOffset = null;
+    resetLocalPrediction();
     if (resetRender) {
       latestState = null;
       renderState = createEmptyState();
     }
+  }
+
+  function resetLocalPrediction() {
+    localPrediction = null;
+    lastPredictionTime = performance.now();
   }
 
   async function startConnection() {
@@ -247,55 +257,67 @@
 
     const index = state.players.findIndex((p) => p.connectionId === myPlayerId);
     if (index === -1) {
+      localPrediction = null;
       return state;
     }
 
     const player = state.players[index];
-    if (!player || !player.leader) {
+    const serverLeader = player?.leader;
+    if (!player || !serverLeader) {
+      localPrediction = null;
       return state;
+    }
+
+    if (!localPrediction || localPrediction.playerId !== player.connectionId) {
+      localPrediction = createPredictionSnapshot(player, state.serverTime);
+      lastPredictionTime = now;
+    }
+
+    const deltaSeconds = clamp((now - lastPredictionTime) / 1000, 0, 0.25);
+    lastPredictionTime = now;
+
+    const snapDistanceSq = LOCAL_SNAP_DISTANCE * LOCAL_SNAP_DISTANCE;
+    const dx = localPrediction.x - serverLeader.x;
+    const dy = localPrediction.y - serverLeader.y;
+    if (dx * dx + dy * dy > snapDistanceSq) {
+      localPrediction.x = serverLeader.x;
+      localPrediction.y = serverLeader.y;
+    } else if (deltaSeconds > 0) {
+      const correction =
+        1 - Math.exp(-LOCAL_CORRECTION_STIFFNESS * deltaSeconds);
+      localPrediction.x = lerp(localPrediction.x, serverLeader.x, correction);
+      localPrediction.y = lerp(localPrediction.y, serverLeader.y, correction);
+    } else {
+      localPrediction.x = serverLeader.x;
+      localPrediction.y = serverLeader.y;
     }
 
     const vx = localDirectionVector.x * LEADER_SPEED;
     const vy = localDirectionVector.y * LEADER_SPEED;
 
-    let predictedX = player.leader.x;
-    let predictedY = player.leader.y;
-    let changed = player.leader.vx !== vx || player.leader.vy !== vy;
-
-    if (serverTimeOffset !== null) {
-      const predictedLocalTime = state.serverTime + serverTimeOffset;
-      const deltaMs = now - predictedLocalTime;
-      if (deltaMs > 0 && (vx !== 0 || vy !== 0)) {
-        const deltaSeconds = Math.min(deltaMs, EXTRAPOLATION_LIMIT_MS) / 1000;
-        predictedX = clamp(
-          predictedX + vx * deltaSeconds,
-          LEADER_RADIUS,
-          canvasWidth - LEADER_RADIUS
-        );
-        predictedY = clamp(
-          predictedY + vy * deltaSeconds,
-          LEADER_RADIUS,
-          canvasHeight - LEADER_RADIUS
-        );
-        if (
-          Math.abs(predictedX - player.leader.x) > 0.01 ||
-          Math.abs(predictedY - player.leader.y) > 0.01
-        ) {
-          changed = true;
-        }
-      }
-    }
-
-    if (!changed) {
-      return state;
-    }
+    localPrediction.x = clamp(
+      localPrediction.x + vx * deltaSeconds,
+      LEADER_RADIUS,
+      canvasWidth - LEADER_RADIUS
+    );
+    localPrediction.y = clamp(
+      localPrediction.y + vy * deltaSeconds,
+      LEADER_RADIUS,
+      canvasHeight - LEADER_RADIUS
+    );
+    localPrediction.vx = vx;
+    localPrediction.vy = vy;
+    localPrediction.serverTime = state.serverTime;
 
     const adjustedLeader = {
-      ...player.leader,
-      vx,
-      vy,
-      x: predictedX,
-      y: predictedY,
+      ownerId: serverLeader.ownerId,
+      x: localPrediction.x,
+      y: localPrediction.y,
+      radius: serverLeader.radius,
+      color: serverLeader.color,
+      type: serverLeader.type,
+      vx: localPrediction.vx,
+      vy: localPrediction.vy,
     };
 
     const adjustedPlayers = state.players.slice();
@@ -307,6 +329,27 @@
     return {
       ...state,
       players: adjustedPlayers,
+    };
+  }
+
+  function createPredictionSnapshot(player, serverTime) {
+    const leader = player.leader ?? {
+      x: LEADER_RADIUS,
+      y: LEADER_RADIUS,
+      vx: 0,
+      vy: 0,
+      ownerId: player.connectionId,
+      radius: LEADER_RADIUS,
+      color: player.teamColor,
+      type: "leader",
+    };
+    return {
+      playerId: player.connectionId,
+      x: leader.x,
+      y: leader.y,
+      vx: leader.vx ?? 0,
+      vy: leader.vy ?? 0,
+      serverTime,
     };
   }
 
