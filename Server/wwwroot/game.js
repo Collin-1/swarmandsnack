@@ -5,9 +5,10 @@
   const DRIFT_CORRECTION_FACTOR = 0.05;
   const LEADER_SPEED = 160;
   const LEADER_RADIUS = 18;
-  const SMOOTHING_STIFFNESS = 16;
-  const LOCAL_CORRECTION_STIFFNESS = 14;
+  const SMOOTHING_STIFFNESS = 12;
+  const LOCAL_CORRECTION_STIFFNESS = 10;
   const LOCAL_SNAP_DISTANCE = 120;
+  const KEY_IDLE_TIMEOUT_MS = 250;
 
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
@@ -39,6 +40,7 @@
   let localPrediction = null;
   let lastPredictionTime = performance.now();
   const activeKeyDirections = new Map();
+  let lastKeyEventTime = performance.now();
 
   const directionByKey = {
     ArrowUp: "up",
@@ -734,9 +736,9 @@
       return clonePlayer(next);
     }
 
-    const playerSmoothing = isLocalPlayer ? 1 : smoothing;
+    const playerSmoothing = isLocalPlayer ? 0.8 : smoothing;
     const underlingSmoothing = isLocalPlayer
-      ? Math.min(1, smoothing * 1.5)
+      ? Math.min(1, smoothing * 1.2)
       : smoothing;
 
     return {
@@ -860,6 +862,7 @@
       return;
     }
 
+    lastKeyEventTime = performance.now();
     activeKeyDirections.set(event.key, {
       direction,
       timestamp: performance.now(),
@@ -876,6 +879,7 @@
       return;
     }
 
+    lastKeyEventTime = performance.now();
     activeKeyDirections.delete(event.key);
 
     event.preventDefault();
@@ -896,6 +900,15 @@
   function draw(now) {
     if (typeof now !== "number") {
       now = performance.now();
+    }
+
+    const timeSinceLastKey = now - lastKeyEventTime;
+    if (
+      timeSinceLastKey > KEY_IDLE_TIMEOUT_MS &&
+      activeKeyDirections.size > 0
+    ) {
+      activeKeyDirections.clear();
+      setPendingDirection("none");
     }
 
     const deltaSeconds = clamp((now - lastFrame) / 1000, 0, 0.25);
