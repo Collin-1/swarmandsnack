@@ -5,10 +5,11 @@
   const DRIFT_CORRECTION_FACTOR = 0.05;
   const LEADER_SPEED = 160;
   const LEADER_RADIUS = 18;
-  const SMOOTHING_STIFFNESS = 12;
-  const LOCAL_CORRECTION_STIFFNESS = 10;
+  const SMOOTHING_STIFFNESS = 16;
+  const LOCAL_CORRECTION_STIFFNESS = 14;
   const LOCAL_SNAP_DISTANCE = 120;
-  const KEY_IDLE_TIMEOUT_MS = 250;
+  const LATENCY_THRESHOLD_MS = 80;
+  const HIGH_LATENCY_INTERPOLATION_MS = 100;
 
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
@@ -40,7 +41,9 @@
   let localPrediction = null;
   let lastPredictionTime = performance.now();
   const activeKeyDirections = new Map();
-  let lastKeyEventTime = performance.now();
+  let estimatedLatency = 0;
+  let latencySamples = [];
+  let lastInputActivityTime = performance.now();
 
   const directionByKey = {
     ArrowUp: "up",
@@ -244,6 +247,15 @@
       const expectedLocal = state.serverTime + serverTimeOffset;
       const drift = performance.now() - expectedLocal;
       serverTimeOffset += drift * DRIFT_CORRECTION_FACTOR;
+
+      const latency = Math.abs(drift);
+      latencySamples.push(latency);
+      if (latencySamples.length > 10) {
+        latencySamples.shift();
+      }
+      estimatedLatency =
+        latencySamples.reduce((sum, val) => sum + val, 0) /
+        latencySamples.length;
     }
 
     stateBuffer.push({ time: state.serverTime, state });
@@ -285,8 +297,11 @@
       localPrediction.x = serverLeader.x;
       localPrediction.y = serverLeader.y;
     } else if (deltaSeconds > 0) {
-      const correction =
-        1 - Math.exp(-LOCAL_CORRECTION_STIFFNESS * deltaSeconds);
+      const adaptiveStiffness =
+        estimatedLatency > LATENCY_THRESHOLD_MS
+          ? LOCAL_CORRECTION_STIFFNESS * 0.5
+          : LOCAL_CORRECTION_STIFFNESS;
+      const correction = 1 - Math.exp(-adaptiveStiffness * deltaSeconds);
       localPrediction.x = lerp(localPrediction.x, serverLeader.x, correction);
       localPrediction.y = lerp(localPrediction.y, serverLeader.y, correction);
     } else {
@@ -375,7 +390,16 @@
     }
 
     const targetServerTime = now - serverTimeOffset - INTERPOLATION_DELAY_MS;
-    while (stateBuffer.length >= 2 && stateBuffer[1].time <= targetServerTime) {
+    const adaptiveDelay =
+      estimatedLatency > LATENCY_THRESHOLD_MS
+        ? HIGH_LATENCY_INTERPOLATION_MS
+        : INTERPOLATION_DELAY_MS;
+    const adjustedTargetTime = now - serverTimeOffset - adaptiveDelay;
+
+    while (
+      stateBuffer.length >= 2 &&
+      stateBuffer[1].time <= adjustedTargetTime
+    ) {
       stateBuffer.shift();
     }
 
@@ -384,13 +408,13 @@
 
     let computedState;
     if (!next) {
-      const deltaMs = Math.max(0, targetServerTime - current.time);
+      const deltaMs = Math.max(0, adjustedTargetTime - current.time);
       const clampedDelta = Math.min(deltaMs, EXTRAPOLATION_LIMIT_MS);
       computedState = extrapolateState(current.state, clampedDelta);
     } else {
       const total = next.time - current.time;
       const alpha = clamp(
-        (targetServerTime - current.time) / (total || 1),
+        (adjustedTargetTime - current.time) / (total || 1),
         0,
         1
       );
@@ -736,9 +760,9 @@
       return clonePlayer(next);
     }
 
-    const playerSmoothing = isLocalPlayer ? 0.8 : smoothing;
+    const playerSmoothing = isLocalPlayer ? 1 : smoothing;
     const underlingSmoothing = isLocalPlayer
-      ? Math.min(1, smoothing * 1.2)
+      ? Math.min(1, smoothing * 1.5)
       : smoothing;
 
     return {
@@ -862,7 +886,7 @@
       return;
     }
 
-    lastKeyEventTime = performance.now();
+    lastInputActivityTime = performance.now();
     activeKeyDirections.set(event.key, {
       direction,
       timestamp: performance.now(),
@@ -879,7 +903,7 @@
       return;
     }
 
-    lastKeyEventTime = performance.now();
+    lastInputActivityTime = performance.now();
     activeKeyDirections.delete(event.key);
 
     event.preventDefault();
@@ -902,10 +926,11 @@
       now = performance.now();
     }
 
-    const timeSinceLastKey = now - lastKeyEventTime;
     if (
-      timeSinceLastKey > KEY_IDLE_TIMEOUT_MS &&
-      activeKeyDirections.size > 0
+      activeKeyDirections.size > 0 &&
+      now - lastInputActivityTime > 300 &&
+      connection &&
+      connection.state === signalR.HubConnectionState.Connected
     ) {
       activeKeyDirections.clear();
       setPendingDirection("none");
