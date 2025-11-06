@@ -34,4 +34,6 @@ C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\SwarmAndSnack.Server.pdb
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\SwarmAndSnack.Server.genruntimeconfig.cache
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\ref\SwarmAndSnack.Server.dll
-C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\0kd53f14ih-wx4e8mz7i6.gz
+C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\fvnpagzao4-k5cvx595zi.gz
+C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\hxb2vetaaq-8cc9ttoxwl.gz
+C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\0kd53f14ih-8cc9ttoxwl.gz
