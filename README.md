@@ -4,9 +4,9 @@ Swarm and Snack is a fast-paced two-player arena game built on ASP.NET Core and 
 
 ## Features
 
-- Real-time multiplayer powered by SignalR with 50 ms server ticks.
+- Real-time multiplayer powered by SignalR with 30 ms server ticks for ultra-smooth gameplay.
 - Deterministic .NET 9 simulation with authoritative collision resolution.
-- Client-side prediction, interpolation, and input smoothing implemented in vanilla JavaScript and Canvas 2D.
+- Optimistic client-side input for zero-latency local player control.
 - Responsive UI with match lobby, invite codes, and restart flow.
 - Dockerfile and Render deployment support for hassle-free hosting.
 
@@ -70,8 +70,9 @@ Navigate to `http://localhost:8080` to play.
 - Iteration loop:
   1.  Run `dotnet watch --project Server/SwarmAndSnack.Server.csproj` for hot reload.
   2.  Modify `Server/wwwroot/game.js` for client tweaks; the watch process serves the latest bundle.
-- The client prediction system keeps a buffer of server snapshots (`stateBuffer`) and maintains a local prediction of the player's leader for tight controls.
-- Server logic lives in `Server/Services/GameManager.cs`, which advances the simulation and broadcasts `GameStateDto` objects.
+- The client uses **optimistic local updates** for zero-latency controls: your leader moves instantly on screen while the server validates in the background.
+- Server logic lives in `Server/Services/GameManager.cs`, which advances the simulation and broadcasts `GameStateDto` objects at 30ms intervals.
+- See `ARCHITECTURE.md` for detailed explanation of the simplified client-server model.
 
 ## Testing & Diagnostics
 
