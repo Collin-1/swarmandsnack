@@ -3,6 +3,7 @@
   const LEADER_SPEED = 160;
   const LEADER_RADIUS = 18;
   const REMOTE_SMOOTHING = 0.15; // Simple lerp factor for remote entities
+  const DEBUG_MODE = true; // Set to false to disable logging
 
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
@@ -31,6 +32,12 @@
   let myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
   let localDirectionVector = { x: 0, y: 0 };
   const activeKeyDirections = new Map();
+
+  // Debug tracking
+  let frameCount = 0;
+  let lastDebugLog = performance.now();
+  let serverUpdateCount = 0;
+  let inputsSent = 0;
 
   const directionByKey = {
     ArrowUp: "up",
@@ -157,6 +164,7 @@
     connection.on("GameStateUpdated", (payload) => {
       serverState = payload;
       roomId = payload.roomId;
+      serverUpdateCount++;
 
       // Sync local leader position from server periodically (soft correction)
       if (myPlayerId && payload.players) {
@@ -166,8 +174,22 @@
           const dx = myLocalLeader.x - me.leader.x;
           const dy = myLocalLeader.y - me.leader.y;
           const distSq = dx * dx + dy * dy;
+
+          if (DEBUG_MODE && distSq > 100) {
+            console.log(
+              `Drift: ${Math.sqrt(distSq).toFixed(
+                1
+              )}px, Local:(${myLocalLeader.x.toFixed(
+                0
+              )},${myLocalLeader.y.toFixed(0)}) Server:(${me.leader.x.toFixed(
+                0
+              )},${me.leader.y.toFixed(0)})`
+            );
+          }
+
           if (distSq > 2500) {
             // Hard snap if > 50px off
+            if (DEBUG_MODE) console.warn("Hard snap correction!");
             myLocalLeader.x = me.leader.x;
             myLocalLeader.y = me.leader.y;
           } else {
@@ -181,7 +203,6 @@
       maybeAssignPlayerId(payload);
       updateStatusFromState(payload);
     });
-
     connection.on("GameOver", (payload) => {
       if (!payload || !payload.winnerId) {
         return;
@@ -443,13 +464,20 @@
       return;
     }
 
+    inputsSent++;
+    if (DEBUG_MODE) {
+      console.log(
+        `Input #${inputsSent}: ${pendingDirection} (was: ${lastDirectionSent})`
+      );
+    }
+
     connection
       .invoke("Move", pendingDirection)
       .then(() => {
         lastDirectionSent = pendingDirection;
       })
       .catch((err) => {
-        console.error(err);
+        console.error("Move failed:", err);
       });
   }
 
@@ -499,15 +527,27 @@
 
     const deltaSeconds = clamp((now - lastFrame) / 1000, 0, 0.25);
     lastFrame = now;
+    frameCount++;
 
     // Update only MY leader locally
     updateLocalLeader(deltaSeconds);
+
+    // Debug logging every 3 seconds
+    if (DEBUG_MODE && now - lastDebugLog > 3000) {
+      const fps = Math.round(frameCount / 3);
+      const updatesPerSec = Math.round(serverUpdateCount / 3);
+      console.log(
+        `FPS: ${fps} | Server updates/sec: ${updatesPerSec} | Active keys: ${activeKeyDirections.size} | Current direction: ${pendingDirection}`
+      );
+      frameCount = 0;
+      serverUpdateCount = 0;
+      lastDebugLog = now;
+    }
 
     // Render everything
     renderScene();
     requestAnimationFrame(draw);
   }
-
   createBtn.addEventListener("click", async () => {
     hideOverlay();
     setStatus("Creating room…");
