@@ -192,8 +192,9 @@
             if (DEBUG_MODE) console.warn("Hard snap correction!");
             myLocalLeader.x = me.leader.x;
             myLocalLeader.y = me.leader.y;
-          } else {
-            // Gentle correction otherwise
+          } else if (distSq > 400) {
+            // Gentle correction only if drift > 20px
+            // This prevents fighting against latency for small drifts
             myLocalLeader.x = lerp(myLocalLeader.x, me.leader.x, 0.1);
             myLocalLeader.y = lerp(myLocalLeader.y, me.leader.y, 0.1);
           }
@@ -471,14 +472,13 @@
       );
     }
 
-    connection
-      .invoke("Move", pendingDirection)
-      .then(() => {
-        lastDirectionSent = pendingDirection;
-      })
-      .catch((err) => {
-        console.error("Move failed:", err);
-      });
+    // Update immediately to prevent race conditions where rapid inputs
+    // (like press-release) are ignored because the previous promise hasn't resolved.
+    lastDirectionSent = pendingDirection;
+
+    connection.invoke("Move", pendingDirection).catch((err) => {
+      console.error("Move failed:", err);
+    });
   }
 
   function handleKeyDown(event) {
