@@ -187,16 +187,16 @@
             );
           }
 
-          if (distSq > 2500) {
-            // Hard snap if > 50px off
+          if (distSq > 10000) {
+            // Hard snap if > 100px off (increased from 50px to handle lag spikes)
             if (DEBUG_MODE) console.warn("Hard snap correction!");
             myLocalLeader.x = me.leader.x;
             myLocalLeader.y = me.leader.y;
-          } else if (distSq > 400) {
-            // Gentle correction only if drift > 20px
-            // This prevents fighting against latency for small drifts
-            myLocalLeader.x = lerp(myLocalLeader.x, me.leader.x, 0.1);
-            myLocalLeader.y = lerp(myLocalLeader.y, me.leader.y, 0.1);
+          } else if (distSq > 900) {
+            // Gentle correction only if drift > 30px (increased from 20px)
+            // Using a lower lerp factor (0.05) to make the pull less noticeable
+            myLocalLeader.x = lerp(myLocalLeader.x, me.leader.x, 0.05);
+            myLocalLeader.y = lerp(myLocalLeader.y, me.leader.y, 0.05);
           }
         }
       }
@@ -268,6 +268,24 @@
     );
     myLocalLeader.vx = vx;
     myLocalLeader.vy = vy;
+  }
+
+  function updateRemoteEntities(deltaSeconds) {
+    if (!serverState || !serverState.players) return;
+
+    for (const player of serverState.players) {
+      if (player.connectionId === myPlayerId) continue;
+
+      // Extrapolate leader
+      player.leader.x += player.leader.vx * deltaSeconds;
+      player.leader.y += player.leader.vy * deltaSeconds;
+
+      // Extrapolate underlings
+      for (const underling of player.underlings) {
+        underling.x += underling.vx * deltaSeconds;
+        underling.y += underling.vy * deltaSeconds;
+      }
+    }
   }
 
   function buildRenderState() {
@@ -531,6 +549,9 @@
 
     // Update only MY leader locally
     updateLocalLeader(deltaSeconds);
+
+    // Extrapolate remote entities for smoothness
+    updateRemoteEntities(deltaSeconds);
 
     // Debug logging every 3 seconds
     if (DEBUG_MODE && now - lastDebugLog > 3000) {
