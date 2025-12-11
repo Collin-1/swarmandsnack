@@ -170,12 +170,11 @@
       if (myPlayerId && payload.players) {
         const me = payload.players.find((p) => p.connectionId === myPlayerId);
         if (me && me.leader) {
-          // Project server position forward by ~50ms to account for latency
+          // Project server position forward by ~100ms to account for latency
           // This reduces "fighting" when moving in a straight line
-          const latencyComp = 0.05;
+          const latencyComp = 0.1;
           const targetX = me.leader.x + me.leader.vx * latencyComp;
           const targetY = me.leader.y + me.leader.vy * latencyComp;
-
           const dx = myLocalLeader.x - targetX;
           const dy = myLocalLeader.y - targetY;
           const distSq = dx * dx + dy * dy;
@@ -184,15 +183,16 @@
             console.log(`Drift: ${Math.sqrt(distSq).toFixed(1)}px`);
           }
 
-          if (distSq > 10000) {
-            // Hard snap if > 100px off
+          if (distSq > 40000) {
+            // Hard snap if > 200px off (Massive desync only)
             if (DEBUG_MODE) console.warn("Hard snap correction!");
             myLocalLeader.x = targetX;
             myLocalLeader.y = targetY;
-          } else if (distSq > 900) {
-            // Gentle correction
-            myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.1);
-            myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.1);
+          } else if (distSq > 2500) {
+            // Gentle correction only if drift > 50px
+            // Very soft pull (0.02) to avoid "choppy" feeling
+            myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.02);
+            myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.02);
           }
         }
       }
@@ -485,6 +485,8 @@
 
     connection.invoke("Move", pendingDirection).catch((err) => {
       console.error("Move failed:", err);
+      // Reset lastDirectionSent so we retry on next flush
+      lastDirectionSent = "retry";
     });
   }
 
@@ -527,6 +529,8 @@
     setPendingDirection("none");
   }
 
+  let lastInputSync = 0;
+
   function draw(now) {
     if (typeof now !== "number") {
       now = performance.now();
@@ -535,6 +539,20 @@
     const deltaSeconds = clamp((now - lastFrame) / 1000, 0, 0.25);
     lastFrame = now;
     frameCount++;
+
+    // Periodic input sync (every 500ms) to ensure server is in sync
+    if (now - lastInputSync > 500) {
+      if (
+        connection &&
+        connection.state === signalR.HubConnectionState.Connected
+      ) {
+        // Force resend if we are moving, or just to be safe
+        if (lastDirectionSent !== "none" || pendingDirection !== "none") {
+          connection.invoke("Move", pendingDirection).catch(() => {});
+        }
+      }
+      lastInputSync = now;
+    }
 
     // Update only MY leader locally
     updateLocalLeader(deltaSeconds);
