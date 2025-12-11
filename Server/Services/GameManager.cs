@@ -140,7 +140,7 @@ public class GameManager
         }
     }
 
-    public async Task TickAsync(CancellationToken cancellationToken)
+    public async Task TickAsync(double deltaSeconds, CancellationToken cancellationToken)
     {
         var rooms = _rooms.Values.ToList();
         foreach (var room in rooms)
@@ -176,7 +176,7 @@ public class GameManager
                 }
                 else
                 {
-                    UpdateRoom(room);
+                    UpdateRoom(room, (float)deltaSeconds);
                     winnerId = room.WinnerId;
                     if (winnerId is not null && !room.WinnerBroadcasted)
                     {
@@ -241,9 +241,8 @@ public class GameManager
         room.Touch();
     }
 
-    private void UpdateRoom(GameRoom room)
+    private void UpdateRoom(GameRoom room, float deltaSeconds)
     {
-        var deltaSeconds = GameConstants.TickDeltaSeconds;
         var players = room.Players.ToList();
 
         foreach (var player in players)
