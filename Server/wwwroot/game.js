@@ -38,6 +38,8 @@
   let lastDebugLog = performance.now();
   let serverUpdateCount = 0;
   let inputsSent = 0;
+  let currentLatency = 0.1; // Default to 100ms
+  let lastPingTime = 0;
 
   const directionByKey = {
     ArrowUp: "up",
@@ -170,9 +172,10 @@
       if (myPlayerId && payload.players) {
         const me = payload.players.find((p) => p.connectionId === myPlayerId);
         if (me && me.leader) {
-          // Project server position forward by ~100ms to account for latency
-          // This reduces "fighting" when moving in a straight line
-          const latencyComp = 0.1;
+          // Project server position forward by current latency (RTT)
+          // This dynamically adjusts to network conditions
+          // We add a small buffer (1.2x) to be safe
+          const latencyComp = Math.max(0.05, currentLatency * 1.2);
           const targetX = me.leader.x + me.leader.vx * latencyComp;
           const targetY = me.leader.y + me.leader.vy * latencyComp;
           const dx = myLocalLeader.x - targetX;
@@ -540,8 +543,9 @@
     lastFrame = now;
     frameCount++;
 
-    // Periodic input sync (every 500ms) to ensure server is in sync
-    if (now - lastInputSync > 500) {
+    // Periodic input sync (every 100ms) to ensure server is in sync
+    // This acts like a UDP heartbeat, ensuring the server knows our intent even if packets drop
+    if (now - lastInputSync > 100) {
       if (
         connection &&
         connection.state === signalR.HubConnectionState.Connected
@@ -552,6 +556,27 @@
         }
       }
       lastInputSync = now;
+    }
+
+    // Measure Latency every 2 seconds
+    if (now - lastPingTime > 2000) {
+      if (
+        connection &&
+        connection.state === signalR.HubConnectionState.Connected
+      ) {
+        const start = performance.now();
+        connection
+          .invoke("Ping")
+          .then(() => {
+            const rtt = (performance.now() - start) / 1000; // Seconds
+            // Smooth the latency value
+            currentLatency = lerp(currentLatency, rtt, 0.2);
+            if (DEBUG_MODE && Math.random() < 0.1)
+              console.log(`Latency: ${(currentLatency * 1000).toFixed(0)}ms`);
+          })
+          .catch(() => {});
+      }
+      lastPingTime = now;
     }
 
     // Update only MY leader locally

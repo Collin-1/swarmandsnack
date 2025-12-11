@@ -28,10 +28,11 @@ public sealed class GameLoopService : BackgroundService
                 var deltaSeconds = (now - lastTick).TotalSeconds;
                 lastTick = now;
 
-                // Clamp delta to prevent huge jumps if the server stalls (max 100ms)
-                if (deltaSeconds > 0.1)
+                // Clamp delta to prevent huge jumps if the server stalls (max 500ms)
+                // Increased from 100ms to allow server to catch up after GC pauses or CPU throttling
+                if (deltaSeconds > 0.5)
                 {
-                    deltaSeconds = 0.1;
+                    deltaSeconds = 0.5;
                 }
 
                 await _gameManager.TickAsync(deltaSeconds, stoppingToken);

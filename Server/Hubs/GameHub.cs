@@ -166,4 +166,6 @@ public class GameHub : Hub
             _ => Direction.None
         };
     }
+
+    public string Ping() => "Pong";
 }
