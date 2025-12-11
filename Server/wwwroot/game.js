@@ -170,38 +170,34 @@
       if (myPlayerId && payload.players) {
         const me = payload.players.find((p) => p.connectionId === myPlayerId);
         if (me && me.leader) {
-          // Gentle correction: only if we drift too far (> 50px)
-          const dx = myLocalLeader.x - me.leader.x;
-          const dy = myLocalLeader.y - me.leader.y;
+          // Project server position forward by ~50ms to account for latency
+          // This reduces "fighting" when moving in a straight line
+          const latencyComp = 0.05;
+          const targetX = me.leader.x + me.leader.vx * latencyComp;
+          const targetY = me.leader.y + me.leader.vy * latencyComp;
+
+          const dx = myLocalLeader.x - targetX;
+          const dy = myLocalLeader.y - targetY;
           const distSq = dx * dx + dy * dy;
 
           if (DEBUG_MODE && distSq > 100) {
-            console.log(
-              `Drift: ${Math.sqrt(distSq).toFixed(
-                1
-              )}px, Local:(${myLocalLeader.x.toFixed(
-                0
-              )},${myLocalLeader.y.toFixed(0)}) Server:(${me.leader.x.toFixed(
-                0
-              )},${me.leader.y.toFixed(0)})`
-            );
+            console.log(`Drift: ${Math.sqrt(distSq).toFixed(1)}px`);
           }
 
           if (distSq > 10000) {
-            // Hard snap if > 100px off (increased from 50px to handle lag spikes)
+            // Hard snap if > 100px off
             if (DEBUG_MODE) console.warn("Hard snap correction!");
-            myLocalLeader.x = me.leader.x;
-            myLocalLeader.y = me.leader.y;
+            myLocalLeader.x = targetX;
+            myLocalLeader.y = targetY;
           } else if (distSq > 900) {
-            // Gentle correction only if drift > 30px (increased from 20px)
-            // Using a lower lerp factor (0.05) to make the pull less noticeable
-            myLocalLeader.x = lerp(myLocalLeader.x, me.leader.x, 0.05);
-            myLocalLeader.y = lerp(myLocalLeader.y, me.leader.y, 0.05);
+            // Gentle correction
+            myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.1);
+            myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.1);
           }
         }
       }
 
-      maybeAssignPlayerId(payload);
+      // maybeAssignPlayerId(payload); // REMOVED: Caused race condition where Red player attached to Blue
       updateStatusFromState(payload);
     });
     connection.on("GameOver", (payload) => {
@@ -228,15 +224,8 @@
     });
   }
 
-  function maybeAssignPlayerId(state) {
-    if (myPlayerId) {
-      return;
-    }
-    const me = state.players.find((p) => p.teamColor === "blue");
-    if (me) {
-      myPlayerId = me.connectionId;
-    }
-  }
+  // REMOVED: maybeAssignPlayerId was causing players to attach to the wrong entity
+  // if the GameStateUpdated event arrived before JoinedGame.
 
   function updateStatusFromState(state) {
     if (!state) {
