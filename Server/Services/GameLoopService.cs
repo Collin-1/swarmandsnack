@@ -20,9 +20,21 @@ public sealed class GameLoopService : BackgroundService
         try
         {
             using var timer = new PeriodicTimer(tickInterval);
+            var lastTick = DateTimeOffset.UtcNow;
+
             while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
             {
-                await _gameManager.TickAsync(stoppingToken);
+                var now = DateTimeOffset.UtcNow;
+                var deltaSeconds = (now - lastTick).TotalSeconds;
+                lastTick = now;
+
+                // Clamp delta to prevent huge jumps if the server stalls (max 100ms)
+                if (deltaSeconds > 0.1)
+                {
+                    deltaSeconds = 0.1;
+                }
+
+                await _gameManager.TickAsync(deltaSeconds, stoppingToken);
             }
         }
         catch (OperationCanceledException)
