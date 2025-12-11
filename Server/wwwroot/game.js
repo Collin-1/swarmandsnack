@@ -32,6 +32,7 @@
   let myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
   let localDirectionVector = { x: 0, y: 0 };
   const activeKeyDirections = new Map();
+  const interpolatedEntities = new Map(); // Stores smooth state for remote entities
 
   // Debug tracking
   let frameCount = 0;
@@ -224,6 +225,7 @@
       lastDirectionSent = "none";
       serverState = createEmptyState();
       myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
+      interpolatedEntities.clear();
     });
   }
 
@@ -262,46 +264,98 @@
     myLocalLeader.vy = vy;
   }
 
-  function updateRemoteEntities(deltaSeconds) {
+  function updateInterpolatedState(deltaSeconds) {
     if (!serverState || !serverState.players) return;
 
+    const activeIds = new Set();
+
+    const processEntity = (entityData, isLocalLeader) => {
+      if (!entityData || !entityData.id) return;
+      const id = entityData.id;
+      activeIds.add(id);
+
+      if (isLocalLeader) return;
+
+      let current = interpolatedEntities.get(id);
+      if (!current) {
+        // New entity, snap to position
+        current = { ...entityData };
+        interpolatedEntities.set(id, current);
+      }
+
+      // Predict movement based on current velocity
+      current.x += current.vx * deltaSeconds;
+      current.y += current.vy * deltaSeconds;
+
+      // Calculate target position with latency compensation
+      // We assume the server snapshot is 'currentLatency' old.
+      // We want to render where the entity is NOW.
+      const lookahead = Math.min(currentLatency, 0.5);
+      const targetX = entityData.x + entityData.vx * lookahead;
+      const targetY = entityData.y + entityData.vy * lookahead;
+
+      // Smoothly pull towards the target
+      const smoothFactor = 0.15;
+      current.x = lerp(current.x, targetX, smoothFactor);
+      current.y = lerp(current.y, targetY, smoothFactor);
+
+      // Sync velocity and radius
+      current.vx = lerp(current.vx, entityData.vx, smoothFactor);
+      current.vy = lerp(current.vy, entityData.vy, smoothFactor);
+      current.radius = entityData.radius;
+
+      interpolatedEntities.set(id, current);
+    };
+
     for (const player of serverState.players) {
-      if (player.connectionId === myPlayerId) continue;
-
-      // Extrapolate leader
-      player.leader.x += player.leader.vx * deltaSeconds;
-      player.leader.y += player.leader.vy * deltaSeconds;
-
-      // Extrapolate underlings
+      processEntity(player.leader, player.connectionId === myPlayerId);
       for (const underling of player.underlings) {
-        underling.x += underling.vx * deltaSeconds;
-        underling.y += underling.vy * deltaSeconds;
+        processEntity(underling, false);
+      }
+    }
+
+    // Cleanup dead entities
+    for (const id of interpolatedEntities.keys()) {
+      if (!activeIds.has(id)) {
+        interpolatedEntities.delete(id);
       }
     }
   }
 
   function buildRenderState() {
-    // Build render state: use server state but override my leader
+    // Build render state: use server state but override with interpolated positions
     if (!serverState.players || serverState.players.length === 0) {
       return serverState;
     }
 
     const players = serverState.players.map((player) => {
+      let leader = player.leader;
+
       if (player.connectionId === myPlayerId) {
         // Use my local leader position
-        return {
-          ...player,
-          leader: {
-            ...player.leader,
-            x: myLocalLeader.x,
-            y: myLocalLeader.y,
-            vx: myLocalLeader.vx,
-            vy: myLocalLeader.vy,
-          },
+        leader = {
+          ...player.leader,
+          x: myLocalLeader.x,
+          y: myLocalLeader.y,
+          vx: myLocalLeader.vx,
+          vy: myLocalLeader.vy,
         };
+      } else {
+        // Use interpolated remote leader
+        const interpolated = interpolatedEntities.get(player.leader.id);
+        if (interpolated) leader = interpolated;
       }
-      // Remote players: use server data directly (already smooth from 30ms ticks)
-      return player;
+
+      // Use interpolated underlings
+      const underlings = player.underlings.map((u) => {
+        return interpolatedEntities.get(u.id) || u;
+      });
+
+      return {
+        ...player,
+        leader,
+        underlings,
+      };
     });
 
     return {
@@ -583,7 +637,7 @@
     updateLocalLeader(deltaSeconds);
 
     // Extrapolate remote entities for smoothness
-    updateRemoteEntities(deltaSeconds);
+    updateInterpolatedState(deltaSeconds);
 
     // Debug logging every 3 seconds
     if (DEBUG_MODE && now - lastDebugLog > 3000) {
