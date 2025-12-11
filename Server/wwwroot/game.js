@@ -170,9 +170,34 @@
 
       // Sync local leader position from server periodically (soft correction)
       if (myPlayerId && payload.players) {
-        // Client Authority: We do NOT correct our position based on server state anymore.
-        // We trust our local simulation 100%.
-        // The server state is only used for rendering the opponent and underlings.
+        const me = payload.players.find((p) => p.connectionId === myPlayerId);
+        if (me && me.leader) {
+          // Project server position forward by current latency (RTT)
+          // This dynamically adjusts to network conditions
+          // We add a small buffer (1.2x) to be safe
+          const latencyComp = Math.max(0.05, currentLatency * 1.2);
+          const targetX = me.leader.x + me.leader.vx * latencyComp;
+          const targetY = me.leader.y + me.leader.vy * latencyComp;
+          const dx = myLocalLeader.x - targetX;
+          const dy = myLocalLeader.y - targetY;
+          const distSq = dx * dx + dy * dy;
+
+          if (DEBUG_MODE && distSq > 100) {
+            console.log(`Drift: ${Math.sqrt(distSq).toFixed(1)}px`);
+          }
+
+          if (distSq > 40000) {
+            // Hard snap if > 200px off (Massive desync only)
+            if (DEBUG_MODE) console.warn("Hard snap correction!");
+            myLocalLeader.x = targetX;
+            myLocalLeader.y = targetY;
+          } else if (distSq > 2500) {
+            // Gentle correction only if drift > 50px
+            // Very soft pull (0.02) to avoid "choppy" feeling
+            myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.02);
+            myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.02);
+          }
+        }
       }
 
       // maybeAssignPlayerId(payload); // REMOVED: Caused race condition where Red player attached to Blue
@@ -461,20 +486,11 @@
     // (like press-release) are ignored because the previous promise hasn't resolved.
     lastDirectionSent = pendingDirection;
 
-    connection
-      .invoke(
-        "Move",
-        myLocalLeader.x,
-        myLocalLeader.y,
-        myLocalLeader.vx,
-        myLocalLeader.vy,
-        pendingDirection
-      )
-      .catch((err) => {
-        console.error("Move failed:", err);
-        // Reset lastDirectionSent so we retry on next flush
-        lastDirectionSent = "retry";
-      });
+    connection.invoke("Move", pendingDirection).catch((err) => {
+      console.error("Move failed:", err);
+      // Reset lastDirectionSent so we retry on next flush
+      lastDirectionSent = "retry";
+    });
   }
 
   function handleKeyDown(event) {
@@ -536,16 +552,7 @@
       ) {
         // Force resend if we are moving, or just to be safe
         if (lastDirectionSent !== "none" || pendingDirection !== "none") {
-          connection
-            .invoke(
-              "Move",
-              myLocalLeader.x,
-              myLocalLeader.y,
-              myLocalLeader.vx,
-              myLocalLeader.vy,
-              pendingDirection
-            )
-            .catch(() => {});
+          connection.invoke("Move", pendingDirection).catch(() => {});
         }
       }
       lastInputSync = now;
