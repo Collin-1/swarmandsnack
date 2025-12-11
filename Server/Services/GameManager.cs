@@ -73,7 +73,7 @@ public class GameManager
 
     public bool TryGetRoom(string roomId, out GameRoom? room) => _rooms.TryGetValue(roomId, out room);
 
-    public bool TryRegisterMove(string roomId, string connectionId, Direction direction)
+    public bool TryRegisterMove(string roomId, string connectionId, float x, float y, float vx, float vy, Direction direction)
     {
         if (!_rooms.TryGetValue(roomId, out var room))
         {
@@ -85,7 +85,12 @@ public class GameManager
             return false;
         }
 
+        // Client Authority: Trust the client's position
+        // In a real game, we would validate distance here to prevent teleport hacks
+        player.Leader.Position = new Vector2(x, y);
+        player.Leader.Velocity = new Vector2(vx, vy);
         player.UpdateInput(direction);
+
         room.Touch();
         return true;
     }
@@ -245,10 +250,8 @@ public class GameManager
     {
         var players = room.Players.ToList();
 
-        foreach (var player in players)
-        {
-            UpdateLeaderMovement(player);
-        }
+        // REMOVED: UpdateLeaderMovement(player) - Client is now authoritative
+        // REMOVED: player.Leader.Advance(deltaSeconds) - Client is now authoritative
 
         foreach (var underling in players.SelectMany(p => p.Underlings))
         {
@@ -259,7 +262,7 @@ public class GameManager
 
         foreach (var player in players)
         {
-            player.Leader.Advance(deltaSeconds);
+            // We still bounce off walls to enforce bounds, even with client authority
             BounceOffWalls(player.Leader);
         }
 
