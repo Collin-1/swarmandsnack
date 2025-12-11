@@ -87,7 +87,7 @@ public class GameHub : Hub
         }
     }
 
-    public async Task Move(string direction)
+    public async Task Move(float x, float y, float vx, float vy, string direction)
     {
         if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var roomId))
         {
@@ -95,18 +95,14 @@ public class GameHub : Hub
         }
 
         var parsedDirection = ParseDirection(direction);
-        if (!_gameManager.TryRegisterMove(roomId, Context.ConnectionId, parsedDirection))
+        if (!_gameManager.TryRegisterMove(roomId, Context.ConnectionId, x, y, vx, vy, parsedDirection))
         {
             _logger.LogDebug("Move ignored for player {Player} not found in room {Room}", Context.ConnectionId, roomId);
             return;
         }
 
-        await Clients.Group(roomId).SendAsync("PlayerMoved", new
-        {
-            playerId = Context.ConnectionId,
-            direction = parsedDirection.ToString().ToLowerInvariant(),
-            roomId
-        });
+        // We don't need to broadcast PlayerMoved anymore since state updates handle it
+        // But we can keep it if the client relies on it for something else (it doesn't seem to)
     }
 
     public async Task RequestState()
