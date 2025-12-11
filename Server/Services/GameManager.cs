@@ -432,6 +432,7 @@ public class GameManager
                 player.DisplayName,
                 player.TeamColor,
                 new EntityStateDto(
+                    player.Leader.Id.ToString(),
                     player.Leader.OwnerId,
                     player.Leader.Position.X,
                     player.Leader.Position.Y,
@@ -442,6 +443,7 @@ public class GameManager
                     player.Leader.Velocity.Y),
                 player.Underlings
                     .Select(u => new EntityStateDto(
+                        u.Id.ToString(),
                         u.OwnerId,
                         u.Position.X,
                         u.Position.Y,

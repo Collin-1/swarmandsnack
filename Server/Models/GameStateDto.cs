@@ -17,6 +17,7 @@ public record PlayerStateDto(
 );
 
 public record EntityStateDto(
+    string Id,
     string OwnerId,
     float X,
     float Y,
