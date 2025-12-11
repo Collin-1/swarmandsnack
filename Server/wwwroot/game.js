@@ -187,13 +187,19 @@
             console.log(`Drift: ${Math.sqrt(distSq).toFixed(1)}px`);
           }
 
+          // If we are stopped locally, we trust our position more to prevent "sliding"
+          // when the server catches up to our stop command.
+          const isLocallyStopped =
+            localDirectionVector.x === 0 && localDirectionVector.y === 0;
+          const driftThreshold = isLocallyStopped ? 10000 : 2500; // 100px vs 50px squared
+
           if (distSq > 40000) {
             // Hard snap if > 200px off (Massive desync only)
             if (DEBUG_MODE) console.warn("Hard snap correction!");
             myLocalLeader.x = targetX;
             myLocalLeader.y = targetY;
-          } else if (distSq > 2500) {
-            // Gentle correction only if drift > 50px
+          } else if (distSq > driftThreshold) {
+            // Gentle correction only if drift is significant
             // Very soft pull (0.02) to avoid "choppy" feeling
             myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.02);
             myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.02);
@@ -296,12 +302,26 @@
 
       // Smoothly pull towards the target
       const smoothFactor = 0.15;
-      current.x = lerp(current.x, targetX, smoothFactor);
-      current.y = lerp(current.y, targetY, smoothFactor);
 
-      // Sync velocity and radius
-      current.vx = lerp(current.vx, entityData.vx, smoothFactor);
-      current.vy = lerp(current.vy, entityData.vy, smoothFactor);
+      // If server says stopped, stop prediction immediately to prevent overshoot
+      const isStopped =
+        Math.abs(entityData.vx) < 0.01 && Math.abs(entityData.vy) < 0.01;
+
+      if (isStopped) {
+        // Stop prediction immediately
+        current.vx = 0;
+        current.vy = 0;
+        // Snap faster to target to avoid "sliding" feel
+        current.x = lerp(current.x, targetX, 0.3);
+        current.y = lerp(current.y, targetY, 0.3);
+      } else {
+        current.x = lerp(current.x, targetX, smoothFactor);
+        current.y = lerp(current.y, targetY, smoothFactor);
+
+        current.vx = lerp(current.vx, entityData.vx, smoothFactor);
+        current.vy = lerp(current.vy, entityData.vy, smoothFactor);
+      }
+
       current.radius = entityData.radius;
 
       interpolatedEntities.set(id, current);
