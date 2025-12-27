@@ -21,6 +21,7 @@
   const howToPlayBtn = document.getElementById("howToPlayBtn");
   const rulesModal = document.getElementById("rulesModal");
   const closeRulesBtn = document.getElementById("closeRulesBtn");
+  const mobileControls = document.getElementById("mobileControls");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -782,6 +783,37 @@
       if (e.target === rulesModal) {
         closeModal();
       }
+    });
+  }
+
+  // Mobile Controls Logic
+  if (mobileControls) {
+    const dpadButtons = mobileControls.querySelectorAll(".dpad-btn");
+    
+    dpadButtons.forEach((btn) => {
+      const direction = btn.getAttribute("data-dir");
+      const keyId = `Mobile${direction}`; // Unique ID for the map
+
+      const handlePress = (e) => {
+        e.preventDefault(); // Prevent mouse emulation/scrolling
+        btn.classList.add("active");
+        activeKeyDirections.set(keyId, {
+          direction: direction,
+          timestamp: performance.now(),
+        });
+        setPendingDirection(resolveDirectionFromKeys());
+      };
+
+      const handleRelease = (e) => {
+        e.preventDefault();
+        btn.classList.remove("active");
+        activeKeyDirections.delete(keyId);
+        setPendingDirection(resolveDirectionFromKeys());
+      };
+
+      btn.addEventListener("pointerdown", handlePress);
+      btn.addEventListener("pointerup", handleRelease);
+      btn.addEventListener("pointerleave", handleRelease);
     });
   }
 
