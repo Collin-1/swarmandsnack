@@ -22,6 +22,8 @@ C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\scopedcss\bundle\SwarmAndSnack.Server.styles.css
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\ibm8pu1559-avtftb9ihy.gz
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\jw2tai11u7-6sgyy7wp9i.gz
+C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\0kd53f14ih-7i9s5w97v6.gz
+C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\f00hnfrdck-ep04y1q8xy.gz
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\vpvs4512vh-w1h5qjdkj2.gz
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\staticwebassets.build.json
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\staticwebassets.build.json.cache
@@ -33,5 +35,3 @@ C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\SwarmAndSnack.Server.pdb
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\SwarmAndSnack.Server.genruntimeconfig.cache
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\ref\SwarmAndSnack.Server.dll
-C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\0kd53f14ih-7i9s5w97v6.gz
-C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\f00hnfrdck-k6dsxzn5n7.gz
