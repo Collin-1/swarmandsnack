@@ -190,8 +190,8 @@
         if (me && me.leader) {
           // Project server position forward by current latency (RTT)
           // This dynamically adjusts to network conditions
-          // We add a small buffer (1.2x) to be safe
-          const latencyComp = Math.max(0.05, currentLatency * 1.2);
+          // We add a larger buffer (1.5x) to be safe on remote connections
+          const latencyComp = Math.max(0.05, currentLatency * 1.5);
           const targetX = me.leader.x + me.leader.vx * latencyComp;
           const targetY = me.leader.y + me.leader.vy * latencyComp;
           const dx = myLocalLeader.x - targetX;
@@ -206,7 +206,8 @@
           // when the server catches up to our stop command.
           const isLocallyStopped =
             localDirectionVector.x === 0 && localDirectionVector.y === 0;
-          const driftThreshold = isLocallyStopped ? 10000 : 2500; // 100px vs 50px squared
+          // Increased threshold for moving to 75px (5625) to reduce rubber-banding on high latency
+          const driftThreshold = isLocallyStopped ? 10000 : 5625; // 100px vs 75px squared
 
           if (distSq > 40000) {
             // Hard snap if > 200px off (Massive desync only)
