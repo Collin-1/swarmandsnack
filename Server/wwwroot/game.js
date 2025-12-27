@@ -8,7 +8,6 @@
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
   const statusEl = document.getElementById("status");
-  const inviteEl = document.getElementById("invite");
   const overlayEl = document.getElementById("overlay");
   const overlayMessageEl = document.getElementById("overlayMessage");
   const restartBtn = document.getElementById("restartBtn");
@@ -16,6 +15,12 @@
   const roomCodeInput = document.getElementById("roomCode");
   const createBtn = document.getElementById("createBtn");
   const joinBtn = document.getElementById("joinBtn");
+  const inviteSection = document.getElementById("inviteSection");
+  const inviteLinkInput = document.getElementById("inviteLinkInput");
+  const copyInviteBtn = document.getElementById("copyInviteBtn");
+  const howToPlayBtn = document.getElementById("howToPlayBtn");
+  const rulesModal = document.getElementById("rulesModal");
+  const closeRulesBtn = document.getElementById("closeRulesBtn");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -72,17 +77,22 @@
 
   function setInviteLink(code) {
     if (!code) {
-      inviteEl.textContent = "";
+      if (inviteSection) inviteSection.style.display = "none";
       return;
     }
     const url = new URL(window.location.href);
     url.searchParams.set("code", code);
-    inviteEl.textContent = `Invite link: ${url.toString()}`;
+    if (inviteLinkInput) inviteLinkInput.value = url.toString();
+    if (inviteSection) inviteSection.style.display = "flex";
     roomCodeInput.value = code;
   }
 
-  function showOverlay(message) {
-    overlayMessageEl.textContent = message;
+  function showOverlay(content, isHtml = false) {
+    if (isHtml) {
+      overlayMessageEl.innerHTML = content;
+    } else {
+      overlayMessageEl.textContent = content;
+    }
     overlayEl.classList.remove("hidden");
   }
 
@@ -165,6 +175,10 @@
     });
 
     connection.on("GameStateUpdated", (payload) => {
+      if (serverState.winnerId) {
+        return;
+      }
+
       serverState = payload;
       roomId = payload.roomId;
       serverUpdateCount++;
@@ -217,10 +231,27 @@
       const winner = serverState.players.find(
         (p) => p.connectionId === payload.winnerId
       );
-      const message = winner
-        ? `${winner.displayName} wins!`
-        : "Match complete!";
-      showOverlay(`${message}\nPress restart to play again.`);
+      
+      // Ensure state reflects game over so movement stops
+      serverState.winnerId = payload.winnerId;
+
+      const winnerName = winner ? (winner.displayName || winner.teamColor) : "Unknown";
+      setStatus(`Game Over! Winner: ${winnerName}`);
+      const winnerColor = winner ? (winner.teamColor === "red" ? "#ff6b6b" : "#4ecdc4") : "#ffffff";
+      const titleText = winner ? "VICTORY!" : "GAME OVER";
+      
+      const html = `
+        <div style="text-align: center;">
+            <h1 class="victory-title" style="--winner-color: ${winnerColor};" data-text="${titleText}">
+                ${titleText}
+            </h1>
+            <p style="font-size: 1.5rem; color: #cbd5e1; margin: 0;">
+                ${winner ? `<strong style="color:${winnerColor}; text-shadow: 0 0 10px ${winnerColor};">${winnerName}</strong> devoured the swarm!` : "Match complete!"}
+            </p>
+        </div>
+      `;
+      
+      showOverlay(html, true);
     });
 
     connection.on("MatchRestarted", () => {
@@ -385,7 +416,6 @@
   }
 
   function renderScene() {
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     drawGrid();
 
     const renderState = buildRenderState();
@@ -395,8 +425,12 @@
 
   function drawGrid() {
     ctx.save();
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.08)";
-    ctx.lineWidth = 1;
+    // Dark Arcade Background
+    ctx.fillStyle = "#0f172a"; // Slate 900
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)"; // Very faint white lines
+    ctx.lineWidth = 2;
     const gridSize = 40;
     for (let x = gridSize; x < canvasWidth; x += gridSize) {
       ctx.beginPath();
@@ -418,25 +452,39 @@
       return;
     }
 
+    // Bouncy wobble animation
+    const time = performance.now();
+
     for (const player of state.players) {
-      const baseColor = player.teamColor === "red" ? "#ef4444" : "#3b82f6";
-      const underlingColor = lighten(baseColor, 0.35);
+      // Vibrant Pastel Colors
+      const baseColor = player.teamColor === "red" ? "#f43f5e" : "#22d3ee"; // Rose 500 / Cyan 400
+      const underlingColor = player.teamColor === "red" ? "#fb7185" : "#67e8f9";
 
       for (const underling of player.underlings) {
-        drawCircle(underling.x, underling.y, underling.radius, underlingColor);
-        drawEye(underling.x, underling.y, underling.radius, baseColor);
+        // Underlings
+        drawCircle(
+          underling.x,
+          underling.y,
+          underling.radius,
+          underlingColor,
+          false // No wobble for small ones
+        );
       }
 
+      // Leaders get a wobble effect
+      const wobble = Math.sin(time / 150) * 2;
+      
       drawCircle(
         player.leader.x,
         player.leader.y,
-        player.leader.radius,
-        baseColor
+        player.leader.radius + wobble,
+        baseColor,
+        true
       );
       drawEye(
         player.leader.x,
         player.leader.y,
-        player.leader.radius,
+        player.leader.radius + wobble,
         "#ffffff"
       );
     }
@@ -444,31 +492,55 @@
 
   function drawScoreboard(state) {
     ctx.save();
-    ctx.fillStyle = "#f8fafc";
-    ctx.font = "18px 'Segoe UI'";
+
+    // Sticker/Card style HUD
+    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+    ctx.lineWidth = 1;
+    
+    const panelHeight = 20 + (state.players?.length || 0) * 30;
+    
+    // Draw box with shadow
+    ctx.shadowColor = "rgba(0,0,0,0.2)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 5;
+    ctx.fillRect(10, 10, 260, panelHeight);
+    
+    ctx.shadowColor = "transparent"; // Reset shadow for stroke
+    ctx.strokeRect(10, 10, 260, panelHeight);
+
+    ctx.font = "bold 16px 'Fredoka', sans-serif";
     ctx.textBaseline = "top";
 
-    let y = 10;
+    let y = 25;
     for (const player of state.players ?? []) {
-      const color = player.teamColor === "red" ? "#f87171" : "#60a5fa";
+      const color = player.teamColor === "red" ? "#f43f5e" : "#22d3ee";
       ctx.fillStyle = color;
       const remaining = player.underlings?.length ?? 0;
-      const label = `${
-        player.displayName || player.teamColor
-      }: ${remaining} underlings`;
-      ctx.fillText(label, 12, y);
-      y += 22;
+      const name = player.displayName || player.teamColor;
+      
+      // Clean text
+      ctx.fillText(`${name}: ${remaining}`, 25, y);
+      
+      y += 30;
     }
 
     ctx.restore();
   }
 
-  function drawCircle(x, y, radius, fillStyle) {
+  function drawCircle(x, y, radius, color, isLeader = false) {
     ctx.save();
     ctx.beginPath();
-    ctx.fillStyle = fillStyle;
+
+    // Flat color with thick outline (Sticker style)
+    ctx.fillStyle = color;
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+    ctx.lineWidth = isLeader ? 4 : 2;
+    
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
+    
     ctx.restore();
   }
 
@@ -476,8 +548,16 @@
     ctx.save();
     ctx.beginPath();
     ctx.fillStyle = fillStyle;
-    ctx.arc(x, y - radius / 2.5, radius / 3.5, 0, Math.PI * 2);
+    // Bigger, cuter eyes
+    ctx.arc(x, y - radius / 3, radius / 3, 0, Math.PI * 2);
     ctx.fill();
+    
+    // Pupil
+    ctx.beginPath();
+    ctx.fillStyle = "#000";
+    ctx.arc(x, y - radius / 3, radius / 8, 0, Math.PI * 2);
+    ctx.fill();
+    
     ctx.restore();
   }
 
@@ -540,7 +620,8 @@
   function flushDirection() {
     if (
       !connection ||
-      connection.state !== signalR.HubConnectionState.Connected
+      connection.state !== signalR.HubConnectionState.Connected ||
+      serverState.winnerId
     ) {
       return;
     }
@@ -654,10 +735,14 @@
     }
 
     // Update only MY leader locally
-    updateLocalLeader(deltaSeconds);
+    if (!serverState.winnerId) {
+      updateLocalLeader(deltaSeconds);
+    }
 
     // Extrapolate remote entities for smoothness
-    updateInterpolatedState(deltaSeconds);
+    if (!serverState.winnerId) {
+      updateInterpolatedState(deltaSeconds);
+    }
 
     // Debug logging every 3 seconds
     if (DEBUG_MODE && now - lastDebugLog > 3000) {
@@ -675,6 +760,31 @@
     renderScene();
     requestAnimationFrame(draw);
   }
+
+  if (copyInviteBtn && inviteLinkInput) {
+    copyInviteBtn.addEventListener("click", () => {
+      inviteLinkInput.select();
+      navigator.clipboard.writeText(inviteLinkInput.value).then(() => {
+        const originalText = copyInviteBtn.textContent;
+        copyInviteBtn.textContent = "Copied!";
+        setTimeout(() => (copyInviteBtn.textContent = originalText), 2000);
+      });
+    });
+  }
+
+  if (howToPlayBtn && rulesModal && closeRulesBtn) {
+    howToPlayBtn.addEventListener("click", () => {
+      rulesModal.classList.add("open");
+    });
+    const closeModal = () => rulesModal.classList.remove("open");
+    closeRulesBtn.addEventListener("click", closeModal);
+    rulesModal.addEventListener("click", (e) => {
+      if (e.target === rulesModal) {
+        closeModal();
+      }
+    });
+  }
+
   createBtn.addEventListener("click", async () => {
     hideOverlay();
     setStatus("Creating room…");
