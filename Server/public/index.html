@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Swarm and Snack</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <section class="controls">
+        <h1>Swarm and Snack</h1>
+        <p class="tagline">
+          Multiplayer leader vs. swarm arena. Share your room code to battle.
+        </p>
+        <div class="form-row">
+          <label for="displayName">Name</label>
+          <input
+            id="displayName"
+            type="text"
+            maxlength="20"
+            placeholder="Optional"
+          />
+        </div>
+        <div class="form-row">
+          <label for="roomCode">Room Code</label>
+          <input
+            id="roomCode"
+            type="text"
+            maxlength="6"
+            placeholder="Enter invite code"
+          />
+        </div>
+        <div class="buttons">
+          <button id="createBtn">Create Game</button>
+          <button id="joinBtn">Join Game</button>
+        </div>
+        <p id="status" class="status">Connecting...</p>
+        <p id="invite" class="invite"></p>
+      </section>
+      <section class="game-area">
+        <canvas id="gameCanvas" width="960" height="640"></canvas>
+        <div id="overlay" class="overlay hidden">
+          <p id="overlayMessage"></p>
+          <button id="restartBtn">Play Again</button>
+        </div>
+      </section>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>

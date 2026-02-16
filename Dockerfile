@@ -1,16 +1,13 @@
 # syntax=docker/dockerfile:1
 
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
-WORKDIR /src
-COPY Server/SwarmAndSnack.Server.csproj Server/
-RUN dotnet restore Server/SwarmAndSnack.Server.csproj
-COPY . .
-RUN dotnet publish Server/SwarmAndSnack.Server.csproj -c Release -o /app/publish
-
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
+FROM node:20-alpine
 WORKDIR /app
-COPY --from=build /app/publish .
-ENV ASPNETCORE_URLS=http://+:8080
-ENV ASPNETCORE_ENVIRONMENT=Production
+
+COPY Server/package.json ./Server/package.json
+RUN cd Server && npm install --omit=dev
+
+COPY Server ./Server
+
+ENV PORT=8080
 EXPOSE 8080
-ENTRYPOINT ["dotnet", "SwarmAndSnack.Server.dll"]
+CMD ["npm", "--prefix", "Server", "start"]
