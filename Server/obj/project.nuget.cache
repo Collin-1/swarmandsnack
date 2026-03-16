@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "Ct0xzsvN8Bk=",
+  "dgSpecHash": "AfPNaWpAaJs=",
   "success": true,
-  "projectFilePath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
+  "projectFilePath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\client-work\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\colli\\.nuget\\packages\\microsoft.aspnetcore.connections.abstractions\\8.0.10\\microsoft.aspnetcore.connections.abstractions.8.0.10.nupkg.sha512",
     "C:\\Users\\colli\\.nuget\\packages\\microsoft.aspnetcore.http.connections.client\\8.0.10\\microsoft.aspnetcore.http.connections.client.8.0.10.nupkg.sha512",
