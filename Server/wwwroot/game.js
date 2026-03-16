@@ -2,7 +2,9 @@
   // Simplified constants - no complex prediction
   const LEADER_SPEED = 160;
   const LEADER_RADIUS = 18;
-  const REMOTE_SMOOTHING = 0.15; // Simple lerp factor for remote entities
+  const INTERPOLATION_DELAY_MS = 100;
+  const SNAPSHOT_RETENTION_MS = 1200;
+  const MAX_STATE_BUFFER = 80;
   const DEBUG_MODE = true; // Set to false to disable logging
 
   const canvas = document.getElementById("gameCanvas");
@@ -38,7 +40,8 @@
   let myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
   let localDirectionVector = { x: 0, y: 0 };
   const activeKeyDirections = new Map();
-  const interpolatedEntities = new Map(); // Stores smooth state for remote entities
+  const stateBuffer = []; // Ordered snapshots for jitter-resistant interpolation
+  let serverClockOffsetMs = null;
 
   // Debug tracking
   let frameCount = 0;
@@ -47,6 +50,10 @@
   let inputsSent = 0;
   let currentLatency = 0.1; // Default to 100ms
   let lastPingTime = 0;
+  let correctionCount = 0;
+  let hardSnapCount = 0;
+  let snapshotJitterMs = 0;
+  let lastSnapshotServerTime = null;
 
   const directionByKey = {
     ArrowUp: "up",
@@ -181,6 +188,7 @@
       }
 
       serverState = payload;
+      pushStateSnapshot(payload);
       roomId = payload.roomId;
       serverUpdateCount++;
 
@@ -188,12 +196,9 @@
       if (myPlayerId && payload.players) {
         const me = payload.players.find((p) => p.connectionId === myPlayerId);
         if (me && me.leader) {
-          // Project server position forward by current latency (RTT)
-          // This dynamically adjusts to network conditions
-          // We add a larger buffer (1.5x) to be safe on remote connections
-          const latencyComp = Math.max(0.05, currentLatency * 1.5);
-          const targetX = me.leader.x + me.leader.vx * latencyComp;
-          const targetY = me.leader.y + me.leader.vy * latencyComp;
+          // Keep local control immediate and reconcile toward authoritative state.
+          const targetX = me.leader.x;
+          const targetY = me.leader.y;
           const dx = myLocalLeader.x - targetX;
           const dy = myLocalLeader.y - targetY;
           const distSq = dx * dx + dy * dy;
@@ -202,23 +207,22 @@
             console.log(`Drift: ${Math.sqrt(distSq).toFixed(1)}px`);
           }
 
-          // If we are stopped locally, we trust our position more to prevent "sliding"
-          // when the server catches up to our stop command.
+          // If we are stopped locally, trust local position to avoid visible post-stop pulls.
           const isLocallyStopped =
             localDirectionVector.x === 0 && localDirectionVector.y === 0;
-          // Increased threshold for moving to 75px (5625) to reduce rubber-banding on high latency
-          const driftThreshold = isLocallyStopped ? 10000 : 5625; // 100px vs 75px squared
+          const driftThreshold = isLocallyStopped ? 12100 : 6400; // 110px vs 80px squared
 
-          if (distSq > 40000) {
-            // Hard snap if > 200px off (Massive desync only)
+          if (distSq > 48400) {
+            // Hard snap only when severely desynced.
             if (DEBUG_MODE) console.warn("Hard snap correction!");
             myLocalLeader.x = targetX;
             myLocalLeader.y = targetY;
+            hardSnapCount++;
           } else if (distSq > driftThreshold) {
-            // Gentle correction only if drift is significant
-            // Very soft pull (0.02) to avoid "choppy" feeling
-            myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.02);
-            myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.02);
+            // Gentle time-stable pull to reduce sawtooth correction behavior.
+            myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.08);
+            myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.08);
+            correctionCount++;
           }
         }
       }
@@ -231,17 +235,23 @@
         return;
       }
       const winner = serverState.players.find(
-        (p) => p.connectionId === payload.winnerId
+        (p) => p.connectionId === payload.winnerId,
       );
-      
+
       // Ensure state reflects game over so movement stops
       serverState.winnerId = payload.winnerId;
 
-      const winnerName = winner ? (winner.displayName || winner.teamColor) : "Unknown";
+      const winnerName = winner
+        ? winner.displayName || winner.teamColor
+        : "Unknown";
       setStatus(`Game Over! Winner: ${winnerName}`);
-      const winnerColor = winner ? (winner.teamColor === "red" ? "#ff6b6b" : "#4ecdc4") : "#ffffff";
+      const winnerColor = winner
+        ? winner.teamColor === "red"
+          ? "#ff6b6b"
+          : "#4ecdc4"
+        : "#ffffff";
       const titleText = winner ? "VICTORY!" : "GAME OVER";
-      
+
       const html = `
         <div style="text-align: center;">
             <h1 class="victory-title" style="--winner-color: ${winnerColor};" data-text="${titleText}">
@@ -252,7 +262,7 @@
             </p>
         </div>
       `;
-      
+
       showOverlay(html, true);
     });
 
@@ -264,8 +274,144 @@
       lastDirectionSent = "none";
       serverState = createEmptyState();
       myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
-      interpolatedEntities.clear();
+      stateBuffer.length = 0;
+      serverClockOffsetMs = null;
+      snapshotJitterMs = 0;
+      lastSnapshotServerTime = null;
+      correctionCount = 0;
+      hardSnapCount = 0;
     });
+  }
+
+  function pushStateSnapshot(state) {
+    const clientNow = Date.now();
+    const hasServerTime = typeof state.serverTime === "number";
+
+    if (hasServerTime) {
+      const measuredOffset = clientNow - state.serverTime;
+      serverClockOffsetMs =
+        serverClockOffsetMs === null
+          ? measuredOffset
+          : lerp(serverClockOffsetMs, measuredOffset, 0.1);
+    }
+
+    const estimatedServerTime = hasServerTime
+      ? state.serverTime
+      : clientNow - (serverClockOffsetMs ?? currentLatency * 1000);
+
+    if (lastSnapshotServerTime !== null) {
+      const interval = Math.max(
+        1,
+        estimatedServerTime - lastSnapshotServerTime,
+      );
+      const jitterSample = Math.abs(interval - 30);
+      snapshotJitterMs = lerp(snapshotJitterMs, jitterSample, 0.15);
+    }
+    lastSnapshotServerTime = estimatedServerTime;
+
+    stateBuffer.push({
+      state,
+      serverTime: estimatedServerTime,
+      clientReceivedAt: clientNow,
+    });
+
+    if (stateBuffer.length > MAX_STATE_BUFFER) {
+      stateBuffer.shift();
+    }
+
+    const cutoff = clientNow - SNAPSHOT_RETENTION_MS;
+    while (stateBuffer.length > 2 && stateBuffer[1].clientReceivedAt < cutoff) {
+      stateBuffer.shift();
+    }
+  }
+
+  function getBufferedStateForRender() {
+    if (stateBuffer.length === 0) {
+      return serverState;
+    }
+
+    if (stateBuffer.length === 1) {
+      return stateBuffer[0].state;
+    }
+
+    const clockOffset = serverClockOffsetMs ?? currentLatency * 1000;
+    const estimatedServerNow = Date.now() - clockOffset;
+    const renderServerTime = estimatedServerNow - INTERPOLATION_DELAY_MS;
+
+    let newerIndex = -1;
+    for (let i = 0; i < stateBuffer.length; i++) {
+      if (stateBuffer[i].serverTime >= renderServerTime) {
+        newerIndex = i;
+        break;
+      }
+    }
+
+    if (newerIndex <= 0) {
+      return stateBuffer[0].state;
+    }
+
+    if (newerIndex === -1) {
+      const older = stateBuffer[stateBuffer.length - 2];
+      const newer = stateBuffer[stateBuffer.length - 1];
+      const span = Math.max(1, newer.serverTime - older.serverTime);
+      const rawT = (renderServerTime - older.serverTime) / span;
+      return interpolateState(older.state, newer.state, clamp(rawT, 0, 1.15));
+    }
+
+    const older = stateBuffer[newerIndex - 1];
+    const newer = stateBuffer[newerIndex];
+    const span = Math.max(1, newer.serverTime - older.serverTime);
+    const t = clamp((renderServerTime - older.serverTime) / span, 0, 1);
+    return interpolateState(older.state, newer.state, t);
+  }
+
+  function interpolateState(olderState, newerState, t) {
+    const olderPlayers = new Map(
+      (olderState.players ?? []).map((p) => [p.connectionId, p]),
+    );
+
+    const players = (newerState.players ?? []).map((newerPlayer) => {
+      const olderPlayer = olderPlayers.get(newerPlayer.connectionId);
+
+      const leader = olderPlayer
+        ? interpolateEntity(olderPlayer.leader, newerPlayer.leader, t)
+        : newerPlayer.leader;
+
+      const olderUnderlings = new Map(
+        (olderPlayer?.underlings ?? []).map((u) => [u.id, u]),
+      );
+
+      const underlings = (newerPlayer.underlings ?? []).map((underling) => {
+        const old = olderUnderlings.get(underling.id);
+        return old ? interpolateEntity(old, underling, t) : underling;
+      });
+
+      return {
+        ...newerPlayer,
+        leader,
+        underlings,
+      };
+    });
+
+    return {
+      ...newerState,
+      players,
+    };
+  }
+
+  function interpolateEntity(olderEntity, newerEntity, t) {
+    if (!olderEntity || !newerEntity) {
+      return newerEntity ?? olderEntity;
+    }
+
+    return {
+      ...newerEntity,
+      x: lerp(olderEntity.x, newerEntity.x, t),
+      y: lerp(olderEntity.y, newerEntity.y, t),
+      vx: lerp(olderEntity.vx, newerEntity.vx, t),
+      vy: lerp(olderEntity.vy, newerEntity.vy, t),
+      radius: lerp(olderEntity.radius, newerEntity.radius, t),
+    };
   }
 
   // REMOVED: maybeAssignPlayerId was causing players to attach to the wrong entity
@@ -292,96 +438,24 @@
     myLocalLeader.x = clamp(
       myLocalLeader.x + vx * deltaSeconds,
       LEADER_RADIUS,
-      canvasWidth - LEADER_RADIUS
+      canvasWidth - LEADER_RADIUS,
     );
     myLocalLeader.y = clamp(
       myLocalLeader.y + vy * deltaSeconds,
       LEADER_RADIUS,
-      canvasHeight - LEADER_RADIUS
+      canvasHeight - LEADER_RADIUS,
     );
     myLocalLeader.vx = vx;
     myLocalLeader.vy = vy;
   }
 
-  function updateInterpolatedState(deltaSeconds) {
-    if (!serverState || !serverState.players) return;
-
-    const activeIds = new Set();
-
-    const processEntity = (entityData, isLocalLeader) => {
-      if (!entityData || !entityData.id) return;
-      const id = entityData.id;
-      activeIds.add(id);
-
-      if (isLocalLeader) return;
-
-      let current = interpolatedEntities.get(id);
-      if (!current) {
-        // New entity, snap to position
-        current = { ...entityData };
-        interpolatedEntities.set(id, current);
-      }
-
-      // Predict movement based on current velocity
-      current.x += current.vx * deltaSeconds;
-      current.y += current.vy * deltaSeconds;
-
-      // Calculate target position with latency compensation
-      // We assume the server snapshot is 'currentLatency' old.
-      // We want to render where the entity is NOW.
-      const lookahead = Math.min(currentLatency, 0.5);
-      const targetX = entityData.x + entityData.vx * lookahead;
-      const targetY = entityData.y + entityData.vy * lookahead;
-
-      // Smoothly pull towards the target
-      const smoothFactor = 0.15;
-
-      // If server says stopped, stop prediction immediately to prevent overshoot
-      const isStopped =
-        Math.abs(entityData.vx) < 0.01 && Math.abs(entityData.vy) < 0.01;
-
-      if (isStopped) {
-        // Stop prediction immediately
-        current.vx = 0;
-        current.vy = 0;
-        // Snap faster to target to avoid "sliding" feel
-        current.x = lerp(current.x, targetX, 0.3);
-        current.y = lerp(current.y, targetY, 0.3);
-      } else {
-        current.x = lerp(current.x, targetX, smoothFactor);
-        current.y = lerp(current.y, targetY, smoothFactor);
-
-        current.vx = lerp(current.vx, entityData.vx, smoothFactor);
-        current.vy = lerp(current.vy, entityData.vy, smoothFactor);
-      }
-
-      current.radius = entityData.radius;
-
-      interpolatedEntities.set(id, current);
-    };
-
-    for (const player of serverState.players) {
-      processEntity(player.leader, player.connectionId === myPlayerId);
-      for (const underling of player.underlings) {
-        processEntity(underling, false);
-      }
+  function buildRenderState(baseState) {
+    // Build render state: use interpolated snapshot and override local leader.
+    if (!baseState.players || baseState.players.length === 0) {
+      return baseState;
     }
 
-    // Cleanup dead entities
-    for (const id of interpolatedEntities.keys()) {
-      if (!activeIds.has(id)) {
-        interpolatedEntities.delete(id);
-      }
-    }
-  }
-
-  function buildRenderState() {
-    // Build render state: use server state but override with interpolated positions
-    if (!serverState.players || serverState.players.length === 0) {
-      return serverState;
-    }
-
-    const players = serverState.players.map((player) => {
+    const players = baseState.players.map((player) => {
       let leader = player.leader;
 
       if (player.connectionId === myPlayerId) {
@@ -393,26 +467,17 @@
           vx: myLocalLeader.vx,
           vy: myLocalLeader.vy,
         };
-      } else {
-        // Use interpolated remote leader
-        const interpolated = interpolatedEntities.get(player.leader.id);
-        if (interpolated) leader = interpolated;
       }
-
-      // Use interpolated underlings
-      const underlings = player.underlings.map((u) => {
-        return interpolatedEntities.get(u.id) || u;
-      });
 
       return {
         ...player,
         leader,
-        underlings,
+        underlings: player.underlings,
       };
     });
 
     return {
-      ...serverState,
+      ...baseState,
       players,
     };
   }
@@ -420,7 +485,8 @@
   function renderScene() {
     drawGrid();
 
-    const renderState = buildRenderState();
+    const bufferedState = getBufferedStateForRender();
+    const renderState = buildRenderState(bufferedState);
     drawEntities(renderState);
     drawScoreboard(renderState);
   }
@@ -469,25 +535,25 @@
           underling.y,
           underling.radius,
           underlingColor,
-          false // No wobble for small ones
+          false, // No wobble for small ones
         );
       }
 
       // Leaders get a wobble effect
       const wobble = Math.sin(time / 150) * 2;
-      
+
       drawCircle(
         player.leader.x,
         player.leader.y,
         player.leader.radius + wobble,
         baseColor,
-        true
+        true,
       );
       drawEye(
         player.leader.x,
         player.leader.y,
         player.leader.radius + wobble,
-        "#ffffff"
+        "#ffffff",
       );
     }
   }
@@ -499,15 +565,15 @@
     ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
     ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
     ctx.lineWidth = 1;
-    
+
     const panelHeight = 20 + (state.players?.length || 0) * 30;
-    
+
     // Draw box with shadow
     ctx.shadowColor = "rgba(0,0,0,0.2)";
     ctx.shadowBlur = 10;
     ctx.shadowOffsetY = 5;
     ctx.fillRect(10, 10, 260, panelHeight);
-    
+
     ctx.shadowColor = "transparent"; // Reset shadow for stroke
     ctx.strokeRect(10, 10, 260, panelHeight);
 
@@ -520,10 +586,10 @@
       ctx.fillStyle = color;
       const remaining = player.underlings?.length ?? 0;
       const name = player.displayName || player.teamColor;
-      
+
       // Clean text
       ctx.fillText(`${name}: ${remaining}`, 25, y);
-      
+
       y += 30;
     }
 
@@ -538,11 +604,11 @@
     ctx.fillStyle = color;
     ctx.strokeStyle = "rgba(0,0,0,0.3)";
     ctx.lineWidth = isLeader ? 4 : 2;
-    
+
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    
+
     ctx.restore();
   }
 
@@ -553,13 +619,13 @@
     // Bigger, cuter eyes
     ctx.arc(x, y - radius / 3, radius / 3, 0, Math.PI * 2);
     ctx.fill();
-    
+
     // Pupil
     ctx.beginPath();
     ctx.fillStyle = "#000";
     ctx.arc(x, y - radius / 3, radius / 8, 0, Math.PI * 2);
     ctx.fill();
-    
+
     ctx.restore();
   }
 
@@ -635,7 +701,7 @@
     inputsSent++;
     if (DEBUG_MODE) {
       console.log(
-        `Input #${inputsSent}: ${pendingDirection} (was: ${lastDirectionSent})`
+        `Input #${inputsSent}: ${pendingDirection} (was: ${lastDirectionSent})`,
       );
     }
 
@@ -741,20 +807,17 @@
       updateLocalLeader(deltaSeconds);
     }
 
-    // Extrapolate remote entities for smoothness
-    if (!serverState.winnerId) {
-      updateInterpolatedState(deltaSeconds);
-    }
-
     // Debug logging every 3 seconds
     if (DEBUG_MODE && now - lastDebugLog > 3000) {
       const fps = Math.round(frameCount / 3);
       const updatesPerSec = Math.round(serverUpdateCount / 3);
       console.log(
-        `FPS: ${fps} | Server updates/sec: ${updatesPerSec} | Active keys: ${activeKeyDirections.size} | Current direction: ${pendingDirection}`
+        `FPS: ${fps} | Server updates/sec: ${updatesPerSec} | Buffer: ${stateBuffer.length} | Jitter: ${snapshotJitterMs.toFixed(1)}ms | Soft corrections: ${correctionCount} | Hard snaps: ${hardSnapCount} | Active keys: ${activeKeyDirections.size} | Current direction: ${pendingDirection}`,
       );
       frameCount = 0;
       serverUpdateCount = 0;
+      correctionCount = 0;
+      hardSnapCount = 0;
       lastDebugLog = now;
     }
 
@@ -790,7 +853,7 @@
   // Mobile Controls Logic
   if (mobileControls) {
     const dpadButtons = mobileControls.querySelectorAll(".dpad-btn");
-    
+
     dpadButtons.forEach((btn) => {
       const direction = btn.getAttribute("data-dir");
       const keyId = `Mobile${direction}`; // Unique ID for the map
