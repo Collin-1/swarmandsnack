@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj": {}
+    "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\client-work\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj": {}
   },
   "projects": {
-    "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj": {
+    "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\client-work\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
+        "projectUniqueName": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\client-work\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
         "projectName": "SwarmAndSnack.Server",
-        "projectPath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
+        "projectPath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\client-work\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
         "packagesPath": "C:\\Users\\colli\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\swarmandsnack\\Server\\obj\\",
+        "outputPath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\client-work\\swarmandsnack\\Server\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
