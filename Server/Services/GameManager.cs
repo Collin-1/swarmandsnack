@@ -426,6 +426,7 @@ public class GameManager
     internal static GameStateDto BuildStateSnapshot(GameRoom room)
     {
         var serverTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var snapshotId = room.AllocateSnapshotId();
         var players = room.Players
             .Select(player => new PlayerStateDto(
                 player.ConnectionId,
@@ -455,7 +456,7 @@ public class GameManager
                     .ToList()))
             .ToList();
 
-        return new GameStateDto(room.Id, room.IsActive, players, room.WinnerId, serverTime);
+        return new GameStateDto(room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId);
     }
 
     private static string GenerateRoomId()
