@@ -5,7 +5,8 @@ public record GameStateDto(
     bool IsActive,
     IReadOnlyCollection<PlayerStateDto> Players,
     string? WinnerId,
-    long ServerTime
+    long ServerTime,
+    long SnapshotId
 );
 
 public record PlayerStateDto(
