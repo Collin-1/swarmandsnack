@@ -2,9 +2,12 @@
   // Simplified constants - no complex prediction
   const LEADER_SPEED = 160;
   const LEADER_RADIUS = 18;
-  const INTERPOLATION_DELAY_MS = 100;
+  const BASE_INTERPOLATION_DELAY_MS = 100;
+  const MIN_INTERPOLATION_DELAY_MS = 70;
+  const MAX_INTERPOLATION_DELAY_MS = 220;
   const SNAPSHOT_RETENTION_MS = 1200;
   const MAX_STATE_BUFFER = 80;
+  const MAX_RECONCILE_STEP_PX = 7;
   const DEBUG_MODE = true; // Set to false to disable logging
 
   const canvas = document.getElementById("gameCanvas");
@@ -42,6 +45,9 @@
   const activeKeyDirections = new Map();
   const stateBuffer = []; // Ordered snapshots for jitter-resistant interpolation
   let serverClockOffsetMs = null;
+  let currentInterpolationDelayMs = BASE_INTERPOLATION_DELAY_MS;
+  let lastAcceptedSnapshotId = 0;
+  const recentSnapshotIntervals = [];
 
   // Debug tracking
   let frameCount = 0;
@@ -54,6 +60,7 @@
   let hardSnapCount = 0;
   let snapshotJitterMs = 0;
   let lastSnapshotServerTime = null;
+  let staleSnapshotDrops = 0;
 
   const directionByKey = {
     ArrowUp: "up",
@@ -136,6 +143,9 @@
       activeKeyDirections.clear();
       setPendingDirection("none");
       lastDirectionSent = "none";
+      stateBuffer.length = 0;
+      recentSnapshotIntervals.length = 0;
+      lastAcceptedSnapshotId = 0;
     });
 
     await connection.start();
@@ -187,6 +197,14 @@
         return;
       }
 
+      if (typeof payload.snapshotId === "number") {
+        if (payload.snapshotId <= lastAcceptedSnapshotId) {
+          staleSnapshotDrops++;
+          return;
+        }
+        lastAcceptedSnapshotId = payload.snapshotId;
+      }
+
       serverState = payload;
       pushStateSnapshot(payload);
       roomId = payload.roomId;
@@ -219,9 +237,12 @@
             myLocalLeader.y = targetY;
             hardSnapCount++;
           } else if (distSq > driftThreshold) {
-            // Gentle time-stable pull to reduce sawtooth correction behavior.
-            myLocalLeader.x = lerp(myLocalLeader.x, targetX, 0.08);
-            myLocalLeader.y = lerp(myLocalLeader.y, targetY, 0.08);
+            // Bounded correction avoids visible rubber-band spikes on bursty updates.
+            const dist = Math.sqrt(distSq);
+            const step = Math.min(MAX_RECONCILE_STEP_PX, dist);
+            const correction = step / Math.max(1, dist);
+            myLocalLeader.x = lerp(myLocalLeader.x, targetX, correction);
+            myLocalLeader.y = lerp(myLocalLeader.y, targetY, correction);
             correctionCount++;
           }
         }
@@ -276,11 +297,49 @@
       myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
       stateBuffer.length = 0;
       serverClockOffsetMs = null;
+      currentInterpolationDelayMs = BASE_INTERPOLATION_DELAY_MS;
+      recentSnapshotIntervals.length = 0;
+      lastAcceptedSnapshotId = 0;
       snapshotJitterMs = 0;
       lastSnapshotServerTime = null;
       correctionCount = 0;
       hardSnapCount = 0;
+      staleSnapshotDrops = 0;
     });
+  }
+
+  function percentile(values, p) {
+    if (!values || values.length === 0) {
+      return 0;
+    }
+    const sorted = [...values].sort((a, b) => a - b);
+    const index = Math.min(
+      sorted.length - 1,
+      Math.max(0, Math.floor((sorted.length - 1) * p)),
+    );
+    return sorted[index];
+  }
+
+  function updateAdaptiveInterpolationDelay(intervalMs) {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      return;
+    }
+    recentSnapshotIntervals.push(intervalMs);
+    if (recentSnapshotIntervals.length > 30) {
+      recentSnapshotIntervals.shift();
+    }
+
+    const p95 = percentile(recentSnapshotIntervals, 0.95);
+    const targetDelay = clamp(
+      p95 + 15,
+      MIN_INTERPOLATION_DELAY_MS,
+      MAX_INTERPOLATION_DELAY_MS,
+    );
+    currentInterpolationDelayMs = lerp(
+      currentInterpolationDelayMs,
+      targetDelay,
+      0.12,
+    );
   }
 
   function pushStateSnapshot(state) {
@@ -306,6 +365,7 @@
       );
       const jitterSample = Math.abs(interval - 30);
       snapshotJitterMs = lerp(snapshotJitterMs, jitterSample, 0.15);
+      updateAdaptiveInterpolationDelay(interval);
     }
     lastSnapshotServerTime = estimatedServerTime;
 
@@ -336,7 +396,7 @@
 
     const clockOffset = serverClockOffsetMs ?? currentLatency * 1000;
     const estimatedServerNow = Date.now() - clockOffset;
-    const renderServerTime = estimatedServerNow - INTERPOLATION_DELAY_MS;
+    const renderServerTime = estimatedServerNow - currentInterpolationDelayMs;
 
     let newerIndex = -1;
     for (let i = 0; i < stateBuffer.length; i++) {
@@ -812,12 +872,13 @@
       const fps = Math.round(frameCount / 3);
       const updatesPerSec = Math.round(serverUpdateCount / 3);
       console.log(
-        `FPS: ${fps} | Server updates/sec: ${updatesPerSec} | Buffer: ${stateBuffer.length} | Jitter: ${snapshotJitterMs.toFixed(1)}ms | Soft corrections: ${correctionCount} | Hard snaps: ${hardSnapCount} | Active keys: ${activeKeyDirections.size} | Current direction: ${pendingDirection}`,
+        `FPS: ${fps} | Server updates/sec: ${updatesPerSec} | Delay: ${currentInterpolationDelayMs.toFixed(0)}ms | Buffer: ${stateBuffer.length} | Jitter: ${snapshotJitterMs.toFixed(1)}ms | Soft corrections: ${correctionCount} | Hard snaps: ${hardSnapCount} | Stale drops: ${staleSnapshotDrops} | Active keys: ${activeKeyDirections.size} | Current direction: ${pendingDirection}`,
       );
       frameCount = 0;
       serverUpdateCount = 0;
       correctionCount = 0;
       hardSnapCount = 0;
+      staleSnapshotDrops = 0;
       lastDebugLog = now;
     }
 
