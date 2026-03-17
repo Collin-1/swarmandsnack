@@ -6,6 +6,7 @@ public class GameRoom
 {
     private readonly ConcurrentDictionary<string, Player> _players = new();
     private readonly object _stateLock = new();
+    private long _snapshotCounter;
 
     public GameRoom(string id)
     {
@@ -92,4 +93,9 @@ public class GameRoom
     public bool IsEmpty => _players.IsEmpty;
 
     public bool IsExpired => DateTime.UtcNow - LastActivityUtc > GameConstants.RoomInactivityTimeout;
+
+    public long AllocateSnapshotId()
+    {
+        return Interlocked.Increment(ref _snapshotCounter);
+    }
 }
