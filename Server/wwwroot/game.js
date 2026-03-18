@@ -415,7 +415,7 @@
       const newer = stateBuffer[stateBuffer.length - 1];
       const span = Math.max(1, newer.serverTime - older.serverTime);
       const rawT = (renderServerTime - older.serverTime) / span;
-      return interpolateState(older.state, newer.state, clamp(rawT, 0, 1.15));
+      return interpolateState(older.state, newer.state, clamp(rawT, 0, 1));
     }
 
     const older = stateBuffer[newerIndex - 1];
@@ -464,13 +464,25 @@
       return newerEntity ?? olderEntity;
     }
 
+    const radius = lerp(olderEntity.radius, newerEntity.radius, t);
+    const x = clamp(
+      lerp(olderEntity.x, newerEntity.x, t),
+      radius,
+      canvasWidth - radius,
+    );
+    const y = clamp(
+      lerp(olderEntity.y, newerEntity.y, t),
+      radius,
+      canvasHeight - radius,
+    );
+
     return {
       ...newerEntity,
-      x: lerp(olderEntity.x, newerEntity.x, t),
-      y: lerp(olderEntity.y, newerEntity.y, t),
+      x,
+      y,
       vx: lerp(olderEntity.vx, newerEntity.vx, t),
       vy: lerp(olderEntity.vy, newerEntity.vy, t),
-      radius: lerp(olderEntity.radius, newerEntity.radius, t),
+      radius,
     };
   }
 
