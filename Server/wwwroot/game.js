@@ -527,8 +527,14 @@
       return baseState;
     }
 
+    // Never render entities that no longer exist in the newest authoritative state.
+    const latestPlayersById = new Map(
+      (serverState.players ?? []).map((p) => [p.connectionId, p]),
+    );
+
     const players = baseState.players.map((player) => {
       let leader = player.leader;
+      const latestPlayer = latestPlayersById.get(player.connectionId);
 
       if (player.connectionId === myPlayerId) {
         // Use my local leader position
@@ -541,10 +547,17 @@
         };
       }
 
+      const allowedUnderlingIds = new Set(
+        (latestPlayer?.underlings ?? []).map((u) => u.id),
+      );
+      const underlings = (player.underlings ?? []).filter((u) =>
+        allowedUnderlingIds.has(u.id),
+      );
+
       return {
         ...player,
         leader,
-        underlings: player.underlings,
+        underlings,
       };
     });
 
