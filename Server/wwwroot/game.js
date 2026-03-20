@@ -115,6 +115,17 @@
     overlayEl.classList.add("hidden");
   }
 
+  function resetSnapshotPipeline() {
+    stateBuffer.length = 0;
+    recentSnapshotIntervals.length = 0;
+    serverClockOffsetMs = null;
+    currentInterpolationDelayMs = BASE_INTERPOLATION_DELAY_MS;
+    lastAcceptedSnapshotId = 0;
+    snapshotJitterMs = 0;
+    lastSnapshotServerTime = null;
+    staleSnapshotDrops = 0;
+  }
+
   async function startConnection() {
     connection = new signalR.HubConnectionBuilder()
       .withUrl("/gamehub", { transport: signalR.HttpTransportType.WebSockets })
@@ -143,9 +154,7 @@
       activeKeyDirections.clear();
       setPendingDirection("none");
       lastDirectionSent = "none";
-      stateBuffer.length = 0;
-      recentSnapshotIntervals.length = 0;
-      lastAcceptedSnapshotId = 0;
+      resetSnapshotPipeline();
     });
 
     await connection.start();
@@ -161,6 +170,7 @@
 
   function registerHandlers() {
     connection.on("GameCreated", (payload) => {
+      resetSnapshotPipeline();
       roomId = payload.roomId;
       myPlayerId = payload.player.playerId;
       serverState = createEmptyState();
@@ -170,6 +180,7 @@
     });
 
     connection.on("JoinedGame", (payload) => {
+      resetSnapshotPipeline();
       roomId = payload.roomId;
       myPlayerId = payload.player?.playerId ?? myPlayerId;
       serverState = createEmptyState();
@@ -195,6 +206,10 @@
     connection.on("GameStateUpdated", (payload) => {
       if (serverState.winnerId) {
         return;
+      }
+
+      if (roomId && payload.roomId && payload.roomId !== roomId) {
+        resetSnapshotPipeline();
       }
 
       if (typeof payload.snapshotId === "number") {
@@ -295,16 +310,9 @@
       lastDirectionSent = "none";
       serverState = createEmptyState();
       myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
-      stateBuffer.length = 0;
-      serverClockOffsetMs = null;
-      currentInterpolationDelayMs = BASE_INTERPOLATION_DELAY_MS;
-      recentSnapshotIntervals.length = 0;
-      lastAcceptedSnapshotId = 0;
-      snapshotJitterMs = 0;
-      lastSnapshotServerTime = null;
+      resetSnapshotPipeline();
       correctionCount = 0;
       hardSnapCount = 0;
-      staleSnapshotDrops = 0;
     });
   }
 
