@@ -414,16 +414,14 @@
       }
     }
 
-    if (newerIndex <= 0) {
+    if (newerIndex === 0) {
       return stateBuffer[0].state;
     }
 
     if (newerIndex === -1) {
-      const older = stateBuffer[stateBuffer.length - 2];
-      const newer = stateBuffer[stateBuffer.length - 1];
-      const span = Math.max(1, newer.serverTime - older.serverTime);
-      const rawT = (renderServerTime - older.serverTime) / span;
-      return interpolateState(older.state, newer.state, clamp(rawT, 0, 1));
+      // All snapshots are older than renderTime (high latency / buffer lag).
+      // Return the newest available state so entities stay at their last known position.
+      return stateBuffer[stateBuffer.length - 1].state;
     }
 
     const older = stateBuffer[newerIndex - 1];
