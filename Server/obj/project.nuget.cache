@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "AfPNaWpAaJs=",
+  "dgSpecHash": "adWeSn48/eE=",
   "success": true,
-  "projectFilePath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\client-work\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
+  "projectFilePath": "C:\\Users\\colli\\OneDrive\\Documents\\Portfolio\\swarmandsnack\\Server\\SwarmAndSnack.Server.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\colli\\.nuget\\packages\\microsoft.aspnetcore.connections.abstractions\\8.0.10\\microsoft.aspnetcore.connections.abstractions.8.0.10.nupkg.sha512",
     "C:\\Users\\colli\\.nuget\\packages\\microsoft.aspnetcore.http.connections.client\\8.0.10\\microsoft.aspnetcore.http.connections.client.8.0.10.nupkg.sha512",
@@ -19,7 +19,11 @@
     "C:\\Users\\colli\\.nuget\\packages\\microsoft.extensions.options\\8.0.2\\microsoft.extensions.options.8.0.2.nupkg.sha512",
     "C:\\Users\\colli\\.nuget\\packages\\microsoft.extensions.primitives\\8.0.0\\microsoft.extensions.primitives.8.0.0.nupkg.sha512",
     "C:\\Users\\colli\\.nuget\\packages\\system.io.pipelines\\8.0.0\\system.io.pipelines.8.0.0.nupkg.sha512",
-    "C:\\Users\\colli\\.nuget\\packages\\system.threading.channels\\8.0.0\\system.threading.channels.8.0.0.nupkg.sha512"
+    "C:\\Users\\colli\\.nuget\\packages\\system.threading.channels\\8.0.0\\system.threading.channels.8.0.0.nupkg.sha512",
+    "C:\\Users\\colli\\.nuget\\packages\\microsoft.netcore.app.ref\\9.0.16\\microsoft.netcore.app.ref.9.0.16.nupkg.sha512",
+    "C:\\Users\\colli\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\9.0.16\\microsoft.windowsdesktop.app.ref.9.0.16.nupkg.sha512",
+    "C:\\Users\\colli\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\9.0.16\\microsoft.aspnetcore.app.ref.9.0.16.nupkg.sha512",
+    "C:\\Users\\colli\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\9.0.16\\microsoft.netcore.app.host.win-x64.9.0.16.nupkg.sha512"
   ],
   "logs": []
 }
