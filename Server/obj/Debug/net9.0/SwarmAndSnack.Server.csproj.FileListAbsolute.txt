@@ -69,7 +69,7 @@ C:\Users\colli\OneDrive\Documents\Portfolio\client-work\swarmandsnack\Server\obj
 C:\Users\colli\OneDrive\Documents\Portfolio\client-work\swarmandsnack\Server\obj\Debug\net9.0\compressed\0kd53f14ih-ngr9iojril.gz
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\2tv3cvqutm-{0}-avtftb9ihy-avtftb9ihy.gz
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\b344mskfnu-{0}-6sgyy7wp9i-6sgyy7wp9i.gz
-C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\bgi137j7z4-{0}-ngr9iojril-ngr9iojril.gz
-C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\6ljgdc4o7p-{0}-ep04y1q8xy-ep04y1q8xy.gz
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\3rmhibaymw-{0}-w1h5qjdkj2-w1h5qjdkj2.gz
 C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\swae.build.ex.cache
+C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\bgi137j7z4-{0}-04fusljg0a-04fusljg0a.gz
+C:\Users\colli\OneDrive\Documents\Portfolio\swarmandsnack\Server\obj\Debug\net9.0\compressed\6ljgdc4o7p-{0}-br2kicljo7-br2kicljo7.gz
