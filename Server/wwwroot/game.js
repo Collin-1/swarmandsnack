@@ -27,6 +27,7 @@
   const rulesModal = document.getElementById("rulesModal");
   const closeRulesBtn = document.getElementById("closeRulesBtn");
   const mobileControls = document.getElementById("mobileControls");
+  const scoreboardEl = document.getElementById("scoreboard");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -650,41 +651,19 @@
   }
 
   function drawScoreboard(state) {
-    ctx.save();
-
-    // Sticker/Card style HUD
-    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
-    ctx.lineWidth = 1;
-
-    const panelHeight = 20 + (state.players?.length || 0) * 30;
-
-    // Draw box with shadow
-    ctx.shadowColor = "rgba(0,0,0,0.2)";
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetY = 5;
-    ctx.fillRect(10, 10, 260, panelHeight);
-
-    ctx.shadowColor = "transparent"; // Reset shadow for stroke
-    ctx.strokeRect(10, 10, 260, panelHeight);
-
-    ctx.font = "bold 16px 'Fredoka', sans-serif";
-    ctx.textBaseline = "top";
-
-    let y = 25;
-    for (const player of state.players ?? []) {
-      const color = player.teamColor === "red" ? "#f43f5e" : "#22d3ee";
-      ctx.fillStyle = color;
-      const remaining = player.underlings?.length ?? 0;
-      const name = player.displayName || player.teamColor;
-
-      // Clean text
-      ctx.fillText(`${name}: ${remaining}`, 25, y);
-
-      y += 30;
+    if (!scoreboardEl) return;
+    if (!state || !state.players || state.players.length === 0) {
+      scoreboardEl.innerHTML = "";
+      return;
     }
-
-    ctx.restore();
+    scoreboardEl.innerHTML = state.players
+      .map((player) => {
+        const color = player.teamColor === "red" ? "#f43f5e" : "#22d3ee";
+        const name = player.displayName || player.teamColor;
+        const remaining = player.underlings?.length ?? 0;
+        return `<span style="color:${color};text-shadow:0 0 8px ${color}80">${name}: <strong>${remaining}</strong></span>`;
+      })
+      .join("");
   }
 
   function drawCircle(x, y, radius, color, isLeader = false) {
