@@ -13,4 +13,5 @@ public static class GameConstants
     public static readonly TimeSpan RoomInactivityTimeout = TimeSpan.FromMinutes(10);
     public const int TargetTickRateMs = 30;
     public const float TickDeltaSeconds = TargetTickRateMs / 1000f;
+    public const float HitForgivenessRadius = 12f; // covers ~75ms of lag at LeaderSpeed
 }
