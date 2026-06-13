@@ -211,7 +211,7 @@ public class GameManager
         return new Player(connectionId, team, displayName ?? team);
     }
 
-    private static void InitializePlayerEntities(Player player, bool spawnLeft)
+    private static void InitializePlayerEntities(Player player, bool spawnLeft, int underlingCount = 0)
     {
         var leaderX = spawnLeft ? GameConstants.ArenaWidth * 0.25f : GameConstants.ArenaWidth * 0.75f;
         var leaderY = GameConstants.ArenaHeight * 0.5f;
@@ -219,8 +219,10 @@ public class GameManager
         player.Leader.Velocity = Vector2.Zero;
         player.Underlings.Clear();
 
-        var underlingCount = Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
-        for (var i = 0; i < underlingCount; i++)
+        var count = underlingCount > 0
+            ? underlingCount
+            : Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
+        for (var i = 0; i < count; i++)
         {
             var offsetX = RandomFloat(-60f, 60f);
             var offsetY = RandomFloat(-60f, 60f);
@@ -233,10 +235,11 @@ public class GameManager
 
     private static void ResetRoom(GameRoom room)
     {
+        var sharedCount = Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
         foreach (var player in room.Players)
         {
             var spawnLeft = player.TeamColor.Equals("blue", StringComparison.OrdinalIgnoreCase);
-            InitializePlayerEntities(player, spawnLeft);
+            InitializePlayerEntities(player, spawnLeft, sharedCount);
         }
         room.Touch();
     }
