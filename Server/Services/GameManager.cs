@@ -388,7 +388,9 @@ public class GameManager
                 {
                     var underling = opponent.Underlings[i];
                     var distanceSq = Vector2.DistanceSquared(leader.Position, underling.Position);
-                    var radiusSum = leader.Radius + underling.Radius;
+                    // Extra buffer compensates for the leader's optimistic client position
+                    // lagging behind the server position by roughly one network round-trip.
+                    var radiusSum = leader.Radius + underling.Radius + GameConstants.HitForgivenessRadius;
                     if (distanceSq < radiusSum * radiusSum)
                     {
                         opponent.Underlings.RemoveAt(i);
