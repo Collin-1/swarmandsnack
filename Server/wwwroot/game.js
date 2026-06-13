@@ -789,6 +789,10 @@
       return;
     }
 
+    if (document.activeElement?.tagName === "INPUT") {
+      return;
+    }
+
     activeKeyDirections.set(event.key, {
       direction,
       timestamp: performance.now(),
@@ -802,6 +806,10 @@
 
   function handleKeyUp(event) {
     if (!directionByKey[event.key]) {
+      return;
+    }
+
+    if (document.activeElement?.tagName === "INPUT") {
       return;
     }
 
