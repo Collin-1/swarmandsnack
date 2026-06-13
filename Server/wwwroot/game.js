@@ -244,10 +244,10 @@
           // If we are stopped locally, trust local position to avoid visible post-stop pulls.
           const isLocallyStopped =
             localDirectionVector.x === 0 && localDirectionVector.y === 0;
-          const driftThreshold = isLocallyStopped ? 12100 : 6400; // 110px vs 80px squared
+          const driftThreshold = isLocallyStopped ? 2500 : 625; // 50px vs 25px squared
 
-          if (distSq > 48400) {
-            // Hard snap only when severely desynced.
+          if (distSq > 10000) {
+            // Hard snap only when severely desynced (>100px).
             if (DEBUG_MODE) console.warn("Hard snap correction!");
             myLocalLeader.x = targetX;
             myLocalLeader.y = targetY;
@@ -554,12 +554,9 @@
         };
       }
 
-      const allowedUnderlingIds = new Set(
-        (latestPlayer?.underlings ?? []).map((u) => u.id),
-      );
-      const underlings = (player.underlings ?? []).filter((u) =>
-        allowedUnderlingIds.has(u.id),
-      );
+      // Use latest server underlings (not the delayed interpolated ones) so the
+      // visual positions match what the server is actually checking for collisions.
+      const underlings = latestPlayer?.underlings ?? [];
 
       return {
         ...player,
