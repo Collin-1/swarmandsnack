@@ -503,7 +503,8 @@
       <section class="controls">
         <h1 data-text="Swarm and Snack">Swarm and Snack</h1>
         <p class="tagline">
-          Multiplayer leader vs. swarm arena. Share your room code to battle.
+          Up to 8-player leader vs. swarm free-for-all. Share your room code,
+          then the host starts the match.
         </p>
         <div class="form-row">
           <label for="displayName">Name</label>
@@ -528,6 +529,7 @@
           <button id="joinBtn">Join Game</button>
         </div>
         <button id="howToPlayBtn">HOW TO PLAY</button>
+        <button id="startBtn" style="display: none">Start Match</button>
         <p id="status" class="status">Connecting…</p>
         <div id="inviteSection" class="form-row" style="display: none">
           <label>Invite Link</label>
@@ -562,20 +564,24 @@
         <h2>How to Play</h2>
         <ul>
           <li>
-            <strong>Objective:</strong> Eat the opponent's swarm before they eat
-            yours!
+            <strong>Objective:</strong> Free-for-all with up to 8 players — eat
+            everyone else's swarm before yours is gone!
+          </li>
+          <li>
+            <strong>Lobby:</strong> Players join with the room code, then the
+            <strong>host</strong> presses <em>Start Match</em>.
           </li>
           <li>
             <strong>Controls:</strong> Use <em>WASD</em> or
             <em>Arrow Keys</em> to move your Leader.
           </li>
           <li>
-            <strong>Mechanics:</strong> Your Leader (big circle) guides the
-            swarm. Collide with smaller enemy dots to eat them.
+            <strong>Mechanics:</strong> Your Leader (big circle) eats any rival
+            dots it touches. Walls block movement — use them to escape or trap.
           </li>
           <li>
-            <strong>Winning:</strong> If you run out of underlings, you lose.
-            The last player standing wins!
+            <strong>Winning:</strong> If you run out of underlings, you're out.
+            The last player with a swarm wins!
           </li>
         </ul>
       </div>

@@ -6,7 +6,16 @@ public record GameStateDto(
     IReadOnlyCollection<PlayerStateDto> Players,
     string? WinnerId,
     long ServerTime,
-    long SnapshotId
+    long SnapshotId,
+    string? HostId,
+    IReadOnlyCollection<ObstacleDto> Obstacles
+);
+
+public record ObstacleDto(
+    float X,
+    float Y,
+    float Width,
+    float Height
 );
 
 public record PlayerStateDto(

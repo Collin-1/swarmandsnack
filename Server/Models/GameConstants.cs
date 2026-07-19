@@ -14,4 +14,14 @@ public static class GameConstants
     public const int TargetTickRateMs = 30;
     public const float TickDeltaSeconds = TargetTickRateMs / 1000f;
     public const float HitForgivenessRadius = 12f; // covers ~75ms of lag at LeaderSpeed
+
+    public const int MinPlayersPerRoom = 2;
+    public const int MaxPlayersPerRoom = 8;
+
+    // Colour keys assigned to players in join order. The client maps these keys to
+    // actual render colours, so this list only needs to stay in sync with the client palette.
+    public static readonly string[] PlayerColorKeys =
+    {
+        "cyan", "rose", "amber", "violet", "lime", "orange", "sky", "fuchsia"
+    };
 }
