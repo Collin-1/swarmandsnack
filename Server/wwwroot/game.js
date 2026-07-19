@@ -2,6 +2,24 @@
   // Simplified constants - no complex prediction
   const LEADER_SPEED = 160;
   const LEADER_RADIUS = 18;
+  const MAX_PLAYERS = 8;
+
+  // Colour keys must match GameConstants.PlayerColorKeys on the server (join order).
+  const PLAYER_PALETTE = {
+    cyan: { leader: "#22d3ee", underling: "#67e8f9" },
+    rose: { leader: "#f43f5e", underling: "#fb7185" },
+    amber: { leader: "#f59e0b", underling: "#fbbf24" },
+    violet: { leader: "#8b5cf6", underling: "#a78bfa" },
+    lime: { leader: "#84cc16", underling: "#a3e635" },
+    orange: { leader: "#fb923c", underling: "#fdba74" },
+    sky: { leader: "#38bdf8", underling: "#7dd3fc" },
+    fuchsia: { leader: "#e879f9", underling: "#f0abfc" },
+  };
+  const DEFAULT_COLORS = { leader: "#94a3b8", underling: "#cbd5e1" };
+  function paletteFor(teamColor) {
+    return PLAYER_PALETTE[teamColor] || DEFAULT_COLORS;
+  }
+
   const BASE_INTERPOLATION_DELAY_MS = 100;
   const MIN_INTERPOLATION_DELAY_MS = 70;
   const MAX_INTERPOLATION_DELAY_MS = 220;
@@ -28,6 +46,7 @@
   const closeRulesBtn = document.getElementById("closeRulesBtn");
   const mobileControls = document.getElementById("mobileControls");
   const scoreboardEl = document.getElementById("scoreboard");
+  const startBtn = document.getElementById("startBtn");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -35,6 +54,9 @@
   let connection;
   let roomId = null;
   let myPlayerId = null;
+  let isHost = false;
+  let needsLeaderSnap = false;
+  let lobbyCount = 0;
   let lastDirectionSent = "none";
   let pendingDirection = "none";
   let lastFrame = performance.now();
@@ -174,34 +196,53 @@
       resetSnapshotPipeline();
       roomId = payload.roomId;
       myPlayerId = payload.player.playerId;
+      isHost = payload.hostId ? payload.hostId === myPlayerId : true;
       serverState = createEmptyState();
-      setStatus("Room created. Waiting for an opponent…");
+      lobbyCount = 1;
       setInviteLink(roomId);
       hideOverlay();
+      updateStatusFromState(serverState);
     });
 
     connection.on("JoinedGame", (payload) => {
       resetSnapshotPipeline();
       roomId = payload.roomId;
       myPlayerId = payload.player?.playerId ?? myPlayerId;
+      isHost = payload.hostId ? payload.hostId === myPlayerId : false;
       serverState = createEmptyState();
-      setStatus("Joined game. Waiting for opponent…");
       setInviteLink(roomId);
       hideOverlay();
+      updateStatusFromState(serverState);
       connection.invoke("RequestState").catch(console.error);
     });
 
     connection.on("JoinFailed", (payload) => {
-      setStatus(`Join failed: ${payload.error}`);
+      const messages = {
+        RoomNotFound: "Room not found. Check the code.",
+        RoomFull: "That room is full (8 players max).",
+        MatchInProgress: "That match already started. Try again after it ends.",
+      };
+      setStatus(`Join failed: ${messages[payload.error] || payload.error}`);
     });
 
     connection.on("PlayerJoined", (payload) => {
-      const count = payload.players.length;
-      if (count < 2) {
-        setStatus("Waiting for opponent to join…");
-      } else {
-        setStatus("Opponent connected! Get ready.");
+      if (payload.hostId && myPlayerId) {
+        isHost = payload.hostId === myPlayerId;
       }
+      updateStatusFromState({
+        isActive: serverState.isActive,
+        winnerId: serverState.winnerId,
+        players: payload.players,
+      });
+    });
+
+    connection.on("StartFailed", (payload) => {
+      const messages = {
+        NotHost: "Only the host can start the match.",
+        NotEnoughPlayers: "Need at least 2 players to start.",
+        AlreadyStarted: "The match already started.",
+      };
+      setStatus(messages[payload.error] || `Cannot start: ${payload.error}`);
     });
 
     connection.on("GameStateUpdated", (payload) => {
@@ -230,36 +271,46 @@
       if (myPlayerId && payload.players) {
         const me = payload.players.find((p) => p.connectionId === myPlayerId);
         if (me && me.leader) {
-          // Keep local control immediate and reconcile toward authoritative state.
-          const targetX = me.leader.x;
-          const targetY = me.leader.y;
-          const dx = myLocalLeader.x - targetX;
-          const dy = myLocalLeader.y - targetY;
-          const distSq = dx * dx + dy * dy;
+          if (needsLeaderSnap) {
+            // Fresh match/spawn: adopt the authoritative position immediately
+            // instead of rubber-banding from a stale local position.
+            myLocalLeader.x = me.leader.x;
+            myLocalLeader.y = me.leader.y;
+            myLocalLeader.vx = 0;
+            myLocalLeader.vy = 0;
+            needsLeaderSnap = false;
+          } else {
+            // Keep local control immediate and reconcile toward authoritative state.
+            const targetX = me.leader.x;
+            const targetY = me.leader.y;
+            const dx = myLocalLeader.x - targetX;
+            const dy = myLocalLeader.y - targetY;
+            const distSq = dx * dx + dy * dy;
 
-          if (DEBUG_MODE && distSq > 100) {
-            console.log(`Drift: ${Math.sqrt(distSq).toFixed(1)}px`);
-          }
+            if (DEBUG_MODE && distSq > 100) {
+              console.log(`Drift: ${Math.sqrt(distSq).toFixed(1)}px`);
+            }
 
-          // If we are stopped locally, trust local position to avoid visible post-stop pulls.
-          const isLocallyStopped =
-            localDirectionVector.x === 0 && localDirectionVector.y === 0;
-          const driftThreshold = isLocallyStopped ? 2500 : 625; // 50px vs 25px squared
+            // If we are stopped locally, trust local position to avoid visible post-stop pulls.
+            const isLocallyStopped =
+              localDirectionVector.x === 0 && localDirectionVector.y === 0;
+            const driftThreshold = isLocallyStopped ? 2500 : 625; // 50px vs 25px squared
 
-          if (distSq > 10000) {
-            // Hard snap only when severely desynced (>100px).
-            if (DEBUG_MODE) console.warn("Hard snap correction!");
-            myLocalLeader.x = targetX;
-            myLocalLeader.y = targetY;
-            hardSnapCount++;
-          } else if (distSq > driftThreshold) {
-            // Bounded correction avoids visible rubber-band spikes on bursty updates.
-            const dist = Math.sqrt(distSq);
-            const step = Math.min(MAX_RECONCILE_STEP_PX, dist);
-            const correction = step / Math.max(1, dist);
-            myLocalLeader.x = lerp(myLocalLeader.x, targetX, correction);
-            myLocalLeader.y = lerp(myLocalLeader.y, targetY, correction);
-            correctionCount++;
+            if (distSq > 10000) {
+              // Hard snap only when severely desynced (>100px).
+              if (DEBUG_MODE) console.warn("Hard snap correction!");
+              myLocalLeader.x = targetX;
+              myLocalLeader.y = targetY;
+              hardSnapCount++;
+            } else if (distSq > driftThreshold) {
+              // Bounded correction avoids visible rubber-band spikes on bursty updates.
+              const dist = Math.sqrt(distSq);
+              const step = Math.min(MAX_RECONCILE_STEP_PX, dist);
+              const correction = step / Math.max(1, dist);
+              myLocalLeader.x = lerp(myLocalLeader.x, targetX, correction);
+              myLocalLeader.y = lerp(myLocalLeader.y, targetY, correction);
+              correctionCount++;
+            }
           }
         }
       }
@@ -268,26 +319,33 @@
       updateStatusFromState(payload);
     });
     connection.on("GameOver", (payload) => {
-      if (!payload || !payload.winnerId) {
+      if (!payload) {
         return;
       }
-      const winner = serverState.players.find(
-        (p) => p.connectionId === payload.winnerId,
-      );
 
-      // Ensure state reflects game over so movement stops
-      serverState.winnerId = payload.winnerId;
+      const isDraw = !payload.winnerId;
+      const winner = isDraw
+        ? null
+        : serverState.players.find((p) => p.connectionId === payload.winnerId);
 
-      const winnerName = winner
-        ? winner.displayName || winner.teamColor
-        : "Unknown";
-      setStatus(`Game Over! Winner: ${winnerName}`);
-      const winnerColor = winner
-        ? winner.teamColor === "red"
-          ? "#ff6b6b"
-          : "#4ecdc4"
-        : "#ffffff";
-      const titleText = winner ? "VICTORY!" : "GAME OVER";
+      // Ensure state reflects game over so movement stops (truthy sentinel for a draw).
+      serverState.winnerId = payload.winnerId || "__draw__";
+
+      const winnerColor = winner ? paletteFor(winner.teamColor).leader : "#ffffff";
+      const titleText = winner ? "VICTORY!" : isDraw ? "DRAW" : "GAME OVER";
+
+      if (winner) {
+        const winnerName = winner.displayName || winner.teamColor;
+        setStatus(`Game Over! Winner: ${winnerName}`);
+      } else {
+        setStatus(isDraw ? "Game Over! It's a draw." : "Game Over!");
+      }
+
+      const bodyText = winner
+        ? `<strong style="color:${winnerColor}; text-shadow: 0 0 10px ${winnerColor};">${winner.displayName || winner.teamColor}</strong> devoured the swarm!`
+        : isDraw
+          ? "Everyone was devoured at once!"
+          : "Match complete!";
 
       const html = `
         <div style="text-align: center;">
@@ -295,25 +353,29 @@
                 ${titleText}
             </h1>
             <p style="font-size: 1.5rem; color: #cbd5e1; margin: 0;">
-                ${winner ? `<strong style="color:${winnerColor}; text-shadow: 0 0 10px ${winnerColor};">${winnerName}</strong> devoured the swarm!` : "Match complete!"}
+                ${bodyText}
             </p>
+            ${isHost ? "" : `<p style="color:#94a3b8; margin-top:1rem;">Waiting for the host to start a rematch…</p>`}
         </div>
       `;
 
+      // Only the host can trigger a rematch.
+      if (restartBtn) restartBtn.style.display = isHost ? "" : "none";
       showOverlay(html, true);
     });
 
-    connection.on("MatchRestarted", () => {
+    connection.on("MatchStarted", () => {
       hideOverlay();
-      setStatus("New match starting!");
+      setStatus("Match starting!");
       activeKeyDirections.clear();
       setPendingDirection("none");
       lastDirectionSent = "none";
       serverState = createEmptyState();
-      myLocalLeader = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0 };
       resetSnapshotPipeline();
+      needsLeaderSnap = true; // adopt spawn position from the first authoritative frame
       correctionCount = 0;
       hardSnapCount = 0;
+      if (restartBtn) restartBtn.style.display = "";
     });
   }
 
@@ -500,12 +562,31 @@
     if (!state) {
       return;
     }
-    if (!state.isActive && state.players.length < 2) {
-      setStatus("Waiting for opponent to join…");
-    } else if (!state.isActive) {
-      setStatus("Match ready. Stay sharp!");
-    } else {
+
+    lobbyCount = state.players?.length ?? lobbyCount;
+    const inLobby = !state.isActive && !state.winnerId;
+
+    // Host-only Start Match button, visible only while sitting in the lobby.
+    if (startBtn) {
+      if (inLobby && isHost && roomId) {
+        startBtn.style.display = "block";
+        startBtn.disabled = lobbyCount < 2;
+        startBtn.textContent = lobbyCount < 2 ? "Waiting for players…" : "Start Match";
+      } else {
+        startBtn.style.display = "none";
+      }
+    }
+
+    if (state.isActive) {
       setStatus("Battle in progress!");
+    } else if (state.winnerId) {
+      // Overlay handles the game-over messaging.
+    } else if (lobbyCount < 2) {
+      setStatus(`Waiting for players… (${lobbyCount}/${MAX_PLAYERS})`);
+    } else if (isHost) {
+      setStatus(`Ready — ${lobbyCount}/${MAX_PLAYERS} in lobby. Press Start Match.`);
+    } else {
+      setStatus(`Waiting for host to start… (${lobbyCount}/${MAX_PLAYERS})`);
     }
   }
 
@@ -526,6 +607,58 @@
     );
     myLocalLeader.vx = vx;
     myLocalLeader.vy = vy;
+
+    // Slide the optimistic local leader around obstacles so it matches the server
+    // (which does the same circle-vs-rectangle resolution) and doesn't clip walls.
+    collideLeaderWithObstacles(myLocalLeader);
+  }
+
+  function collideLeaderWithObstacles(leader) {
+    const obstacles = serverState.obstacles;
+    if (!obstacles || obstacles.length === 0) {
+      return;
+    }
+    const radius = LEADER_RADIUS;
+    for (const o of obstacles) {
+      const maxX = o.x + o.width;
+      const maxY = o.y + o.height;
+      let nx;
+      let ny;
+      let penetration;
+
+      if (leader.x >= o.x && leader.x <= maxX && leader.y >= o.y && leader.y <= maxY) {
+        // Centre inside the box: eject along the least-penetration axis.
+        const left = leader.x - o.x;
+        const right = maxX - leader.x;
+        const top = leader.y - o.y;
+        const bottom = maxY - leader.y;
+        const min = Math.min(left, right, top, bottom);
+        if (min === left) { nx = -1; ny = 0; penetration = left + radius; }
+        else if (min === right) { nx = 1; ny = 0; penetration = right + radius; }
+        else if (min === top) { nx = 0; ny = -1; penetration = top + radius; }
+        else { nx = 0; ny = 1; penetration = bottom + radius; }
+      } else {
+        const cx = clamp(leader.x, o.x, maxX);
+        const cy = clamp(leader.y, o.y, maxY);
+        const dx = leader.x - cx;
+        const dy = leader.y - cy;
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= radius * radius) {
+          continue;
+        }
+        const dist = Math.sqrt(distSq);
+        if (dist > 0.0001) { nx = dx / dist; ny = dy / dist; } else { nx = 0; ny = -1; }
+        penetration = radius - dist;
+      }
+
+      leader.x += nx * penetration;
+      leader.y += ny * penetration;
+      const inward = leader.vx * nx + leader.vy * ny;
+      if (inward < 0) {
+        leader.vx -= nx * inward;
+        leader.vy -= ny * inward;
+      }
+    }
   }
 
   function buildRenderState(baseState) {
@@ -573,11 +706,35 @@
 
   function renderScene() {
     drawGrid();
+    drawObstacles();
 
     const bufferedState = getBufferedStateForRender();
     const renderState = buildRenderState(bufferedState);
     drawEntities(renderState);
     drawScoreboard(renderState);
+  }
+
+  function drawObstacles() {
+    const obstacles = serverState.obstacles;
+    if (!obstacles || obstacles.length === 0) {
+      return;
+    }
+    ctx.save();
+    for (const o of obstacles) {
+      ctx.fillStyle = "#1e293b"; // Slate 800
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.rect(o.x, o.y, o.width, o.height);
+      ctx.fill();
+      ctx.stroke();
+
+      // Inner accent line for a bit of arcade depth.
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(o.x + 3, o.y + 3, o.width - 6, o.height - 6);
+    }
+    ctx.restore();
   }
 
   function drawGrid() {
@@ -613,9 +770,10 @@
     const time = performance.now();
 
     for (const player of state.players) {
-      // Vibrant Pastel Colors
-      const baseColor = player.teamColor === "red" ? "#f43f5e" : "#22d3ee"; // Rose 500 / Cyan 400
-      const underlingColor = player.teamColor === "red" ? "#fb7185" : "#67e8f9";
+      // Per-player palette (keyed by the server-assigned colour key).
+      const colors = paletteFor(player.teamColor);
+      const baseColor = colors.leader;
+      const underlingColor = colors.underling;
 
       for (const underling of player.underlings) {
         // Underlings
@@ -655,7 +813,7 @@
     }
     scoreboardEl.innerHTML = state.players
       .map((player) => {
-        const color = player.teamColor === "red" ? "#f43f5e" : "#22d3ee";
+        const color = paletteFor(player.teamColor).leader;
         const name = player.displayName || player.teamColor;
         const remaining = player.underlings?.length ?? 0;
         return `<span style="color:${color};text-shadow:0 0 8px ${color}80">${name}: <strong>${remaining}</strong></span>`;
@@ -985,16 +1143,29 @@
   });
 
   restartBtn.addEventListener("click", async () => {
-    hideOverlay();
     if (!roomId) {
       return;
     }
+    // Rematch goes through the same host-gated start path.
     try {
-      await connection.invoke("RestartGame");
+      await connection.invoke("StartGame");
     } catch (err) {
       console.error(err);
     }
   });
+
+  if (startBtn) {
+    startBtn.addEventListener("click", async () => {
+      if (!roomId) {
+        return;
+      }
+      try {
+        await connection.invoke("StartGame");
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
 
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keyup", handleKeyUp);
