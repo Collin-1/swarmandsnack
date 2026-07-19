@@ -19,6 +19,10 @@ public class Player
     public Direction PendingDirection { get; set; } = Direction.None;
     public DateTime LastInputAtUtc { get; private set; } = DateTime.UtcNow;
 
+    // Assigned in join order; indexes into Level.SpawnPoints so a player keeps
+    // the same starting corner across rematches.
+    public int SpawnIndex { get; set; }
+
     public void UpdateInput(Direction direction)
     {
         PendingDirection = direction;

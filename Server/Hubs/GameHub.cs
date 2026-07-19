@@ -37,7 +37,8 @@ public class GameHub : Hub
         await Clients.Caller.SendAsync("GameCreated", new
         {
             roomId = room.Id,
-            player = MapPlayer(player)
+            player = MapPlayer(player),
+            hostId = room.HostId
         });
 
         await BroadcastLobbyUpdate(room.Id);
@@ -54,10 +55,12 @@ public class GameHub : Hub
         ConnectionRooms[Context.ConnectionId] = roomId;
         await Groups.AddToGroupAsync(Context.ConnectionId, roomId);
 
+        _gameManager.TryGetRoom(roomId, out var joinedRoom);
         await Clients.Caller.SendAsync("JoinedGame", new
         {
             roomId,
-            player = player is null ? null : MapPlayer(player)
+            player = player is null ? null : MapPlayer(player),
+            hostId = joinedRoom?.HostId
         });
 
         await BroadcastLobbyUpdate(roomId);
@@ -74,16 +77,21 @@ public class GameHub : Hub
         return Groups.RemoveFromGroupAsync(Context.ConnectionId, roomId);
     }
 
-    public async Task RestartGame()
+    // Host-gated. Used for both the initial start from the lobby and rematches.
+    public async Task StartGame()
     {
         if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var roomId))
         {
             return;
         }
 
-        if (_gameManager.TryRestartMatch(roomId))
+        if (_gameManager.TryStartMatch(roomId, Context.ConnectionId, out var error))
         {
-            await Clients.Group(roomId).SendAsync("MatchRestarted", new { roomId });
+            await Clients.Group(roomId).SendAsync("MatchStarted", new { roomId });
+        }
+        else
+        {
+            await Clients.Caller.SendAsync("StartFailed", new { roomId, error = error ?? "Unknown" });
         }
     }
 
@@ -139,7 +147,8 @@ public class GameHub : Hub
         await Clients.Group(roomId).SendAsync("PlayerJoined", new
         {
             roomId,
-            players = lobby
+            players = lobby,
+            hostId = room.HostId
         });
     }
 

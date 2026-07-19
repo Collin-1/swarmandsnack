@@ -31,9 +31,10 @@ public class GameManager
         while (_rooms.ContainsKey(roomId));
 
         var room = new GameRoom(roomId);
-        var player = CreatePlayer(connectionId, "blue", displayName);
+        var player = CreatePlayer(connectionId, ColorKeyForIndex(0), displayName);
+        player.SpawnIndex = 0;
         room.TryAddPlayer(player);
-        InitializePlayerEntities(player, spawnLeft: true);
+        InitializePlayerEntities(player, player.SpawnIndex);
         _rooms[roomId] = room;
         _logger.LogInformation("Created room {RoomId} by {ConnectionId}", roomId, connectionId);
         return (room, player);
@@ -50,16 +51,22 @@ public class GameManager
             return false;
         }
 
-        var existingCount = room.Players.Count();
-        if (existingCount >= 2)
+        if (room.IsActive)
+        {
+            error = "MatchInProgress";
+            return false;
+        }
+
+        var existingCount = room.PlayerCount;
+        if (existingCount >= GameConstants.MaxPlayersPerRoom)
         {
             error = "RoomFull";
             return false;
         }
 
-        var team = existingCount == 0 ? "blue" : "red";
-        player = CreatePlayer(connectionId, team, displayName);
-        InitializePlayerEntities(player, spawnLeft: team == "blue");
+        player = CreatePlayer(connectionId, ColorKeyForIndex(existingCount), displayName);
+        player.SpawnIndex = existingCount;
+        InitializePlayerEntities(player, player.SpawnIndex);
 
         if (!room.TryAddPlayer(player))
         {
@@ -69,6 +76,12 @@ public class GameManager
 
         _logger.LogInformation("Player {ConnectionId} joined room {RoomId}", connectionId, roomId);
         return true;
+    }
+
+    private static string ColorKeyForIndex(int index)
+    {
+        var keys = GameConstants.PlayerColorKeys;
+        return keys[index % keys.Length];
     }
 
     public bool TryGetRoom(string roomId, out GameRoom? room) => _rooms.TryGetValue(roomId, out room);
@@ -104,7 +117,9 @@ public class GameManager
 
             lock (room.SyncRoot)
             {
-                if (!room.IsEmpty && room.IsActive)
+                // Only end the match if a single player is left standing; with more
+                // players still present, the free-for-all keeps going.
+                if (room.IsActive && room.PlayerCount == 1)
                 {
                     var remaining = room.Players.First();
                     room.Stop(remaining.ConnectionId);
@@ -119,23 +134,35 @@ public class GameManager
         }
     }
 
-    public bool TryRestartMatch(string roomId)
+    // Host-gated match start, used for both the initial start from the lobby and rematches.
+    public bool TryStartMatch(string roomId, string connectionId, out string? error)
     {
+        error = null;
         if (!_rooms.TryGetValue(roomId, out var room))
         {
+            error = "RoomNotFound";
             return false;
         }
 
         lock (room.SyncRoot)
         {
-            if (room.Players.Count() < 2)
+            if (!room.IsHost(connectionId))
             {
+                error = "NotHost";
+                return false;
+            }
+
+            if (!room.CanStart)
+            {
+                error = room.PlayerCount < GameConstants.MinPlayersPerRoom
+                    ? "NotEnoughPlayers"
+                    : "AlreadyStarted";
                 return false;
             }
 
             ResetRoom(room);
             room.Start();
-            _logger.LogInformation("Room {RoomId} match restarted", roomId);
+            _logger.LogInformation("Room {RoomId} match started by host {ConnectionId}", roomId, connectionId);
             return true;
         }
     }
@@ -143,6 +170,8 @@ public class GameManager
     public async Task TickAsync(double deltaSeconds, CancellationToken cancellationToken)
     {
         var rooms = _rooms.Values.ToList();
+        List<Task>? sendTasks = null;
+
         foreach (var room in rooms)
         {
             if (room.IsExpired)
@@ -152,57 +181,46 @@ public class GameManager
                 continue;
             }
 
-            bool shouldBroadcast;
-            GameStateDto? state;
+            GameStateDto state;
             string? winnerId;
-            bool announceWinner;
+            bool announceResult;
 
+            // Simulation runs under the room lock (fast, CPU-bound); the network
+            // broadcasts below are fired without awaiting so all rooms send in
+            // parallel and one slow room can't stall the whole tick.
             lock (room.SyncRoot)
             {
-                winnerId = room.WinnerId;
-                announceWinner = winnerId is not null && !room.WinnerBroadcasted;
-
-                if (room.ShouldStart)
-                {
-                    ResetRoom(room);
-                    room.Start();
-                    _logger.LogInformation("Room {RoomId} match started", room.Id);
-                }
-
-                if (!room.IsActive)
-                {
-                    state = BuildStateSnapshot(room);
-                    shouldBroadcast = true;
-                }
-                else
+                if (room.IsActive)
                 {
                     UpdateRoom(room, (float)deltaSeconds);
-                    winnerId = room.WinnerId;
-                    if (winnerId is not null && !room.WinnerBroadcasted)
-                    {
-                        announceWinner = true;
-                    }
-                    state = BuildStateSnapshot(room);
-                    shouldBroadcast = true;
                 }
 
-                if (announceWinner && winnerId is not null)
+                winnerId = room.WinnerId;
+                announceResult = room.MatchEnded && !room.WinnerBroadcasted;
+
+                state = BuildStateSnapshot(room);
+
+                if (announceResult)
                 {
                     room.MarkWinnerBroadcasted();
                 }
             }
 
-            if (shouldBroadcast && state is not null)
-            {
-                await _hubContext.Clients.Group(room.Id)
-                    .SendAsync("GameStateUpdated", state, cancellationToken);
-            }
+            sendTasks ??= new List<Task>(rooms.Count);
+            sendTasks.Add(_hubContext.Clients.Group(room.Id)
+                .SendAsync("GameStateUpdated", state, cancellationToken));
 
-            if (announceWinner && winnerId is not null)
+            if (announceResult)
             {
-                await _hubContext.Clients.Group(room.Id)
-                    .SendAsync("GameOver", new { winnerId }, cancellationToken);
+                // winnerId may be null on a simultaneous knockout (draw).
+                sendTasks.Add(_hubContext.Clients.Group(room.Id)
+                    .SendAsync("GameOver", new { winnerId }, cancellationToken));
             }
+        }
+
+        if (sendTasks is not null)
+        {
+            await Task.WhenAll(sendTasks);
         }
     }
 
@@ -211,10 +229,11 @@ public class GameManager
         return new Player(connectionId, team, displayName ?? team);
     }
 
-    private static void InitializePlayerEntities(Player player, bool spawnLeft, int underlingCount = 0)
+    private static void InitializePlayerEntities(Player player, int spawnIndex, int underlingCount = 0)
     {
-        var leaderX = spawnLeft ? GameConstants.ArenaWidth * 0.25f : GameConstants.ArenaWidth * 0.75f;
-        var leaderY = GameConstants.ArenaHeight * 0.5f;
+        var spawn = Level.SpawnPoints[spawnIndex % Level.SpawnPoints.Count];
+        var leaderX = spawn.X;
+        var leaderY = spawn.Y;
         player.Leader.Position = new Vector2(leaderX, leaderY);
         player.Leader.Velocity = Vector2.Zero;
         player.Underlings.Clear();
@@ -226,7 +245,9 @@ public class GameManager
         {
             var offsetX = RandomFloat(-60f, 60f);
             var offsetY = RandomFloat(-60f, 60f);
-            var position = new Vector2(leaderX + offsetX, leaderY + offsetY);
+            var position = new Vector2(
+                Math.Clamp(leaderX + offsetX, GameConstants.UnderlingRadius, GameConstants.ArenaWidth - GameConstants.UnderlingRadius),
+                Math.Clamp(leaderY + offsetY, GameConstants.UnderlingRadius, GameConstants.ArenaHeight - GameConstants.UnderlingRadius));
             var direction = RandomUnitVector();
             var velocity = direction * GameConstants.UnderlingSpeed;
             player.Underlings.Add(new Underling(player.ConnectionId, position, velocity));
@@ -238,8 +259,7 @@ public class GameManager
         var sharedCount = Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
         foreach (var player in room.Players)
         {
-            var spawnLeft = player.TeamColor.Equals("blue", StringComparison.OrdinalIgnoreCase);
-            InitializePlayerEntities(player, spawnLeft, sharedCount);
+            InitializePlayerEntities(player, player.SpawnIndex, sharedCount);
         }
         room.Touch();
     }
@@ -258,12 +278,14 @@ public class GameManager
             MaybeNudgeUnderling(underling);
             underling.Advance(deltaSeconds);
             BounceOffWalls(underling);
+            ResolveObstacleCollisions(underling, bounce: true);
         }
 
         foreach (var player in players)
         {
             player.Leader.Advance(deltaSeconds);
             BounceOffWalls(player.Leader);
+            ResolveObstacleCollisions(player.Leader, bounce: false);
         }
 
         ResolveUnderlingCollisions(players);
@@ -321,6 +343,57 @@ public class GameManager
         entity.Position = pos;
     }
 
+    // Circle-vs-axis-aligned-rectangle resolution against static obstacles.
+    // Underlings bounce (reflect); leaders slide (inward velocity removed) so
+    // walls feel like barriers to steer along rather than trampolines.
+    private static void ResolveObstacleCollisions(GameEntity entity, bool bounce)
+    {
+        var radius = entity.Radius;
+        foreach (var obstacle in Level.Obstacles)
+        {
+            var pos = entity.Position;
+            Vector2 normal;
+            float penetration;
+
+            if (obstacle.ContainsCenter(pos))
+            {
+                // Centre buried inside the box: eject along the least-penetration axis.
+                var left = pos.X - obstacle.X;
+                var right = obstacle.MaxX - pos.X;
+                var top = pos.Y - obstacle.Y;
+                var bottom = obstacle.MaxY - pos.Y;
+                var min = Math.Min(Math.Min(left, right), Math.Min(top, bottom));
+                if (min == left) { normal = new Vector2(-1f, 0f); penetration = left + radius; }
+                else if (min == right) { normal = new Vector2(1f, 0f); penetration = right + radius; }
+                else if (min == top) { normal = new Vector2(0f, -1f); penetration = top + radius; }
+                else { normal = new Vector2(0f, 1f); penetration = bottom + radius; }
+            }
+            else
+            {
+                var closest = obstacle.ClosestPoint(pos);
+                var delta = pos - closest;
+                var distSq = delta.LengthSquared;
+                if (distSq >= radius * radius)
+                {
+                    continue;
+                }
+                var dist = (float)Math.Sqrt(distSq);
+                normal = dist > 0.0001f ? delta / dist : new Vector2(0f, -1f);
+                penetration = radius - dist;
+            }
+
+            entity.Position = pos + normal * penetration;
+
+            var inward = entity.Velocity.X * normal.X + entity.Velocity.Y * normal.Y;
+            if (inward < 0f)
+            {
+                entity.Velocity = bounce
+                    ? entity.Velocity - normal * (2f * inward) // reflect off the surface
+                    : entity.Velocity - normal * inward;       // cancel inward component (slide)
+            }
+        }
+    }
+
     private static void ResolveUnderlingCollisions(IReadOnlyList<Player> players)
     {
         var allUnderlings = players.SelectMany(p => p.Underlings).ToList();
@@ -352,26 +425,27 @@ public class GameManager
 
     private void ResolveLeaderCollisions(IReadOnlyList<Player> players, GameRoom room)
     {
-        if (players.Count != 2)
+        for (var i = 0; i < players.Count; i++)
         {
-            return;
-        }
-
-        var first = players[0].Leader;
-        var second = players[1].Leader;
-        var distanceSq = Vector2.DistanceSquared(first.Position, second.Position);
-        var radiusSum = first.Radius + second.Radius;
-        if (distanceSq < radiusSum * radiusSum)
-        {
-            var direction = (first.Position - second.Position).Normalized();
-            if (direction.LengthSquared == 0)
+            for (var j = i + 1; j < players.Count; j++)
             {
-                direction = new Vector2(1f, 0f);
+                var first = players[i].Leader;
+                var second = players[j].Leader;
+                var distanceSq = Vector2.DistanceSquared(first.Position, second.Position);
+                var radiusSum = first.Radius + second.Radius;
+                if (distanceSq < radiusSum * radiusSum)
+                {
+                    var direction = (first.Position - second.Position).Normalized();
+                    if (direction.LengthSquared == 0)
+                    {
+                        direction = new Vector2(1f, 0f);
+                    }
+                    first.Velocity = direction * GameConstants.LeaderSpeed;
+                    second.Velocity = direction * -GameConstants.LeaderSpeed;
+                    first.Position += direction * 4f;
+                    second.Position -= direction * 4f;
+                }
             }
-            first.Velocity = direction * GameConstants.LeaderSpeed;
-            second.Velocity = direction * -GameConstants.LeaderSpeed;
-            first.Position += direction * 4f;
-            second.Position -= direction * 4f;
         }
 
         ResolveLeaderUnderlingCollisions(players, room);
@@ -411,22 +485,22 @@ public class GameManager
 
     private void CheckForWinner(GameRoom room)
     {
-        foreach (var player in room.Players)
+        // Free-for-all: the match ends when at most one player still has underlings.
+        var alive = room.Players.Where(p => p.Underlings.Count > 0).ToList();
+        if (alive.Count > 1)
         {
-            var opponent = room.Players.FirstOrDefault(p => p != player);
-            if (opponent is null)
-            {
-                continue;
-            }
-
-            if (opponent.Underlings.Count == 0)
-            {
-                room.Stop(player.ConnectionId);
-                _logger.LogInformation("Room {RoomId} winner {ConnectionId}", room.Id, player.ConnectionId);
-                return;
-            }
+            return;
         }
+
+        // Exactly one survivor wins; zero survivors (simultaneous knockout) is a draw.
+        var winnerId = alive.Count == 1 ? alive[0].ConnectionId : null;
+        room.Stop(winnerId);
+        _logger.LogInformation("Room {RoomId} match ended, winner {ConnectionId}", room.Id, winnerId ?? "(draw)");
     }
+
+    // Obstacle geometry is static for the whole app lifetime, so map it once.
+    private static readonly IReadOnlyCollection<ObstacleDto> ObstacleDtos =
+        Level.Obstacles.Select(o => new ObstacleDto(o.X, o.Y, o.Width, o.Height)).ToList();
 
     internal static GameStateDto BuildStateSnapshot(GameRoom room)
     {
@@ -461,7 +535,7 @@ public class GameManager
                     .ToList()))
             .ToList();
 
-        return new GameStateDto(room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId);
+        return new GameStateDto(room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId, room.HostId, ObstacleDtos);
     }
 
     private static string GenerateRoomId()

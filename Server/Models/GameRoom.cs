@@ -21,13 +21,20 @@ public class GameRoom
     public bool IsActive { get; private set; }
     public string? WinnerId { get; private set; }
     public bool WinnerBroadcasted { get; private set; }
+    // True once a started match has finished (win or draw). Distinguishes a
+    // just-ended match from a lobby room that never started, so a draw
+    // (null WinnerId) is still announced exactly once.
+    public bool MatchEnded { get; private set; }
+    public string? HostId { get; private set; }
     internal object SyncRoot => _stateLock;
 
     public IEnumerable<Player> Players => _players.Values;
 
+    public int PlayerCount => _players.Count;
+
     public bool TryAddPlayer(Player player)
     {
-        if (_players.Count >= 2)
+        if (_players.Count >= GameConstants.MaxPlayersPerRoom)
         {
             return false;
         }
@@ -35,6 +42,7 @@ public class GameRoom
         var added = _players.TryAdd(player.ConnectionId, player);
         if (added)
         {
+            HostId ??= player.ConnectionId;
             Touch();
         }
         return added;
@@ -48,6 +56,11 @@ public class GameRoom
         if (removed)
         {
             Touch();
+            if (connectionId == HostId)
+            {
+                // Promote the next remaining player to host so the room stays startable.
+                HostId = _players.Keys.FirstOrDefault();
+            }
             if (_players.IsEmpty)
             {
                 IsActive = false;
@@ -56,12 +69,14 @@ public class GameRoom
         return removed;
     }
 
+    public bool IsHost(string connectionId) => HostId is not null && HostId == connectionId;
+
     public void Touch()
     {
         LastActivityUtc = DateTime.UtcNow;
     }
 
-    public bool ShouldStart => _players.Count == 2 && !IsActive;
+    public bool CanStart => _players.Count >= GameConstants.MinPlayersPerRoom && !IsActive;
 
     public void Start()
     {
@@ -70,6 +85,7 @@ public class GameRoom
             IsActive = true;
             WinnerId = null;
             WinnerBroadcasted = false;
+            MatchEnded = false;
             Touch();
         }
     }
@@ -81,6 +97,7 @@ public class GameRoom
             WinnerId = winnerId;
             IsActive = false;
             WinnerBroadcasted = false;
+            MatchEnded = true;
             Touch();
         }
     }
