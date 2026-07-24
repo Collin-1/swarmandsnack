@@ -8,7 +8,9 @@ public record GameStateDto(
     long ServerTime,
     long SnapshotId,
     string? HostId,
-    IReadOnlyCollection<ObstacleDto> Obstacles
+    IReadOnlyCollection<ObstacleDto> Obstacles,
+    float WorldWidth,
+    float WorldHeight
 );
 
 public record ObstacleDto(
