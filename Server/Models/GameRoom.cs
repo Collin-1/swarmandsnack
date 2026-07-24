@@ -78,10 +78,19 @@ public class GameRoom
 
     public bool CanStart => _players.Count >= GameConstants.MinPlayersPerRoom && !IsActive;
 
+    private float _frozenWorldWidth = GameConstants.HalfWorldWidth;
+
+    // In the lobby the world tracks the live player count (so joining a 5th
+    // player visibly opens the right half); once a match starts the width is
+    // frozen so mid-match disconnects can't shrink the world around players.
+    public float EffectiveWorldWidth =>
+        IsActive ? _frozenWorldWidth : Level.WorldWidthFor(_players.Count);
+
     public void Start()
     {
         lock (_stateLock)
         {
+            _frozenWorldWidth = Level.WorldWidthFor(_players.Count);
             IsActive = true;
             WinnerId = null;
             WinnerBroadcasted = false;

@@ -2,8 +2,15 @@ namespace SwarmAndSnack.Server.Models;
 
 public static class GameConstants
 {
-    public const float ArenaWidth = 960f;
-    public const float ArenaHeight = 640f;
+    // The world is a multi-room map; the client renders a camera viewport into
+    // it. With HalfWorldMaxPlayers or fewer players, only the left half
+    // (rooms 1-4) is open and the world is clipped at HalfWorldWidth.
+    public const float WorldWidth = 1920f;
+    public const float WorldHeight = 1280f;
+    public const float HalfWorldWidth = 960f;
+    public const int HalfWorldMaxPlayers = 4;
+    public const float WallThickness = 20f;
+    public const float DoorWidth = 120f;
     public const float LeaderSpeed = 160f; // units per second
     public const float LeaderRadius = 18f;
     public const float UnderlingSpeed = 120f;

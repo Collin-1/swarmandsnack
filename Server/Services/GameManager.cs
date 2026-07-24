@@ -231,6 +231,8 @@ public class GameManager
 
     private static void InitializePlayerEntities(Player player, int spawnIndex, int underlingCount = 0)
     {
+        // Spawn at the centre of the player's room; underling offsets (±60)
+        // stay inside every room's interior by construction.
         var spawn = Level.SpawnPoints[spawnIndex % Level.SpawnPoints.Count];
         var leaderX = spawn.X;
         var leaderY = spawn.Y;
@@ -245,9 +247,7 @@ public class GameManager
         {
             var offsetX = RandomFloat(-60f, 60f);
             var offsetY = RandomFloat(-60f, 60f);
-            var position = new Vector2(
-                Math.Clamp(leaderX + offsetX, GameConstants.UnderlingRadius, GameConstants.ArenaWidth - GameConstants.UnderlingRadius),
-                Math.Clamp(leaderY + offsetY, GameConstants.UnderlingRadius, GameConstants.ArenaHeight - GameConstants.UnderlingRadius));
+            var position = new Vector2(leaderX + offsetX, leaderY + offsetY);
             var direction = RandomUnitVector();
             var velocity = direction * GameConstants.UnderlingSpeed;
             player.Underlings.Add(new Underling(player.ConnectionId, position, velocity));
@@ -267,6 +267,8 @@ public class GameManager
     private void UpdateRoom(GameRoom room, float deltaSeconds)
     {
         var players = room.Players.ToList();
+        var worldWidth = room.EffectiveWorldWidth;
+        var obstacles = Level.ObstaclesFor(worldWidth);
 
         foreach (var player in players)
         {
@@ -277,15 +279,15 @@ public class GameManager
         {
             MaybeNudgeUnderling(underling);
             underling.Advance(deltaSeconds);
-            BounceOffWalls(underling);
-            ResolveObstacleCollisions(underling, bounce: true);
+            BounceOffWalls(underling, worldWidth);
+            ResolveObstacleCollisions(underling, obstacles, bounce: true);
         }
 
         foreach (var player in players)
         {
             player.Leader.Advance(deltaSeconds);
-            BounceOffWalls(player.Leader);
-            ResolveObstacleCollisions(player.Leader, bounce: false);
+            BounceOffWalls(player.Leader, worldWidth);
+            ResolveObstacleCollisions(player.Leader, obstacles, bounce: false);
         }
 
         ResolveUnderlingCollisions(players);
@@ -313,7 +315,7 @@ public class GameManager
         }
     }
 
-    private static void BounceOffWalls(GameEntity entity)
+    private static void BounceOffWalls(GameEntity entity, float worldWidth)
     {
         var pos = entity.Position;
         var radius = entity.Radius;
@@ -323,9 +325,9 @@ public class GameManager
             pos = new Vector2(radius, pos.Y);
             entity.Velocity = entity.Velocity.BounceX();
         }
-        else if (pos.X + radius > GameConstants.ArenaWidth)
+        else if (pos.X + radius > worldWidth)
         {
-            pos = new Vector2(GameConstants.ArenaWidth - radius, pos.Y);
+            pos = new Vector2(worldWidth - radius, pos.Y);
             entity.Velocity = entity.Velocity.BounceX();
         }
 
@@ -334,9 +336,9 @@ public class GameManager
             pos = new Vector2(pos.X, radius);
             entity.Velocity = entity.Velocity.BounceY();
         }
-        else if (pos.Y + radius > GameConstants.ArenaHeight)
+        else if (pos.Y + radius > GameConstants.WorldHeight)
         {
-            pos = new Vector2(pos.X, GameConstants.ArenaHeight - radius);
+            pos = new Vector2(pos.X, GameConstants.WorldHeight - radius);
             entity.Velocity = entity.Velocity.BounceY();
         }
 
@@ -346,10 +348,10 @@ public class GameManager
     // Circle-vs-axis-aligned-rectangle resolution against static obstacles.
     // Underlings bounce (reflect); leaders slide (inward velocity removed) so
     // walls feel like barriers to steer along rather than trampolines.
-    private static void ResolveObstacleCollisions(GameEntity entity, bool bounce)
+    private static void ResolveObstacleCollisions(GameEntity entity, IReadOnlyList<Obstacle> obstacles, bool bounce)
     {
         var radius = entity.Radius;
-        foreach (var obstacle in Level.Obstacles)
+        foreach (var obstacle in obstacles)
         {
             var pos = entity.Position;
             Vector2 normal;
@@ -498,9 +500,12 @@ public class GameManager
         _logger.LogInformation("Room {RoomId} match ended, winner {ConnectionId}", room.Id, winnerId ?? "(draw)");
     }
 
-    // Obstacle geometry is static for the whole app lifetime, so map it once.
-    private static readonly IReadOnlyCollection<ObstacleDto> ObstacleDtos =
-        Level.Obstacles.Select(o => new ObstacleDto(o.X, o.Y, o.Width, o.Height)).ToList();
+    // Obstacle geometry is static for the whole app lifetime, so map both
+    // variants (half world = rooms 1-4, full world = all 8) once.
+    private static readonly IReadOnlyCollection<ObstacleDto> HalfWorldObstacleDtos =
+        Level.HalfWorldObstacles.Select(o => new ObstacleDto(o.X, o.Y, o.Width, o.Height)).ToList();
+    private static readonly IReadOnlyCollection<ObstacleDto> FullWorldObstacleDtos =
+        Level.FullWorldObstacles.Select(o => new ObstacleDto(o.X, o.Y, o.Width, o.Height)).ToList();
 
     internal static GameStateDto BuildStateSnapshot(GameRoom room)
     {
@@ -535,7 +540,14 @@ public class GameManager
                     .ToList()))
             .ToList();
 
-        return new GameStateDto(room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId, room.HostId, ObstacleDtos);
+        var worldWidth = room.EffectiveWorldWidth;
+        var obstacles = worldWidth <= GameConstants.HalfWorldWidth
+            ? HalfWorldObstacleDtos
+            : FullWorldObstacleDtos;
+
+        return new GameStateDto(
+            room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId,
+            room.HostId, obstacles, worldWidth, GameConstants.WorldHeight);
     }
 
     private static string GenerateRoomId()

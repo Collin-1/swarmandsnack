@@ -26,7 +26,7 @@
   const SNAPSHOT_RETENTION_MS = 1200;
   const MAX_STATE_BUFFER = 80;
   const MAX_RECONCILE_STEP_PX = 7;
-  const DEBUG_MODE = true; // Set to false to disable logging
+  const DEBUG_MODE = false; // Set to true to enable console diagnostics
 
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
@@ -50,6 +50,12 @@
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
+
+  // The canvas is a camera viewport into a larger world; dimensions arrive
+  // with each server snapshot (half world with <=4 players, full with more).
+  let worldWidth = canvasWidth;
+  let worldHeight = canvasHeight;
+  const camera = { x: 0, y: 0 };
 
   let connection;
   let roomId = null;
@@ -110,7 +116,10 @@
   }
 
   function setStatus(message) {
-    statusEl.textContent = message;
+    // Called every snapshot (~33/s); skip identical writes to avoid DOM churn.
+    if (statusEl.textContent !== message) {
+      statusEl.textContent = message;
+    }
   }
 
   function setInviteLink(code) {
@@ -199,6 +208,7 @@
       isHost = payload.hostId ? payload.hostId === myPlayerId : true;
       serverState = createEmptyState();
       lobbyCount = 1;
+      needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
       hideOverlay();
       updateStatusFromState(serverState);
@@ -210,6 +220,7 @@
       myPlayerId = payload.player?.playerId ?? myPlayerId;
       isHost = payload.hostId ? payload.hostId === myPlayerId : false;
       serverState = createEmptyState();
+      needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
       hideOverlay();
       updateStatusFromState(serverState);
@@ -267,6 +278,9 @@
       roomId = payload.roomId;
       serverUpdateCount++;
 
+      if (typeof payload.worldWidth === "number") worldWidth = payload.worldWidth;
+      if (typeof payload.worldHeight === "number") worldHeight = payload.worldHeight;
+
       // Sync local leader position from server periodically (soft correction)
       if (myPlayerId && payload.players) {
         const me = payload.players.find((p) => p.connectionId === myPlayerId);
@@ -294,7 +308,20 @@
             // If we are stopped locally, trust local position to avoid visible post-stop pulls.
             const isLocallyStopped =
               localDirectionVector.x === 0 && localDirectionVector.y === 0;
-            const driftThreshold = isLocallyStopped ? 2500 : 625; // 50px vs 25px squared
+            // Expected honest drift grows with latency (the server's view of us
+            // trails by ~RTT). Scale the tolerance with the measured ping so a
+            // laggy or heavily loaded setup doesn't trigger a correction on
+            // every snapshot (constant rubber-band stutter). Capped below the
+            // 100px hard-snap so severe desync still snaps.
+            const latencySlackPx = Math.min(
+              90,
+              LEADER_SPEED * (currentLatency + 0.05),
+            );
+            const movingPx = Math.max(25, latencySlackPx);
+            const stoppedPx = Math.max(50, latencySlackPx * 1.5);
+            const driftThreshold = isLocallyStopped
+              ? stoppedPx * stoppedPx
+              : movingPx * movingPx;
 
             if (distSq > 10000) {
               // Hard snap only when severely desynced (>100px).
@@ -537,12 +564,12 @@
     const x = clamp(
       lerp(olderEntity.x, newerEntity.x, t),
       radius,
-      canvasWidth - radius,
+      worldWidth - radius,
     );
     const y = clamp(
       lerp(olderEntity.y, newerEntity.y, t),
       radius,
-      canvasHeight - radius,
+      worldHeight - radius,
     );
 
     return {
@@ -567,12 +594,14 @@
     const inLobby = !state.isActive && !state.winnerId;
 
     // Host-only Start Match button, visible only while sitting in the lobby.
+    // Runs every snapshot; only touch the DOM when something actually changes.
     if (startBtn) {
       if (inLobby && isHost && roomId) {
-        startBtn.style.display = "block";
-        startBtn.disabled = lobbyCount < 2;
-        startBtn.textContent = lobbyCount < 2 ? "Waiting for players…" : "Start Match";
-      } else {
+        const label = lobbyCount < 2 ? "Waiting for players…" : "Start Match";
+        if (startBtn.style.display !== "block") startBtn.style.display = "block";
+        if (startBtn.disabled !== (lobbyCount < 2)) startBtn.disabled = lobbyCount < 2;
+        if (startBtn.textContent !== label) startBtn.textContent = label;
+      } else if (startBtn.style.display !== "none") {
         startBtn.style.display = "none";
       }
     }
@@ -598,12 +627,12 @@
     myLocalLeader.x = clamp(
       myLocalLeader.x + vx * deltaSeconds,
       LEADER_RADIUS,
-      canvasWidth - LEADER_RADIUS,
+      worldWidth - LEADER_RADIUS,
     );
     myLocalLeader.y = clamp(
       myLocalLeader.y + vy * deltaSeconds,
       LEADER_RADIUS,
-      canvasHeight - LEADER_RADIUS,
+      worldHeight - LEADER_RADIUS,
     );
     myLocalLeader.vx = vx;
     myLocalLeader.vy = vy;
@@ -704,61 +733,98 @@
     };
   }
 
+  // The world background (grid + room walls) never changes during play, so it
+  // is rasterised once into a world-sized offscreen canvas and the camera's
+  // window into it is blitted each frame. Re-rendered only when the world
+  // size or obstacle set changes (first snapshot, or half <-> full world).
+  const staticLayer = document.createElement("canvas");
+  let staticLayerSignature = null;
+
+  function updateCamera() {
+    camera.x = clamp(
+      myLocalLeader.x - canvasWidth / 2,
+      0,
+      Math.max(0, worldWidth - canvasWidth),
+    );
+    camera.y = clamp(
+      myLocalLeader.y - canvasHeight / 2,
+      0,
+      Math.max(0, worldHeight - canvasHeight),
+    );
+  }
+
   function renderScene() {
-    drawGrid();
-    drawObstacles();
+    const signature = `${worldWidth}x${worldHeight}:${serverState.obstacles?.length ?? 0}`;
+    if (signature !== staticLayerSignature) {
+      staticLayerSignature = signature;
+      renderStaticLayer();
+    }
+
+    updateCamera();
+    ctx.drawImage(
+      staticLayer,
+      camera.x, camera.y, canvasWidth, canvasHeight,
+      0, 0, canvasWidth, canvasHeight,
+    );
 
     const bufferedState = getBufferedStateForRender();
     const renderState = buildRenderState(bufferedState);
+
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
     drawEntities(renderState);
+    ctx.restore();
+
     drawScoreboard(renderState);
   }
 
-  function drawObstacles() {
-    const obstacles = serverState.obstacles;
-    if (!obstacles || obstacles.length === 0) {
-      return;
+  function renderStaticLayer() {
+    staticLayer.width = Math.max(worldWidth, canvasWidth);
+    staticLayer.height = Math.max(worldHeight, canvasHeight);
+    const sctx = staticLayer.getContext("2d");
+    sctx.save();
+
+    // Dark Arcade Background
+    sctx.fillStyle = "#0f172a"; // Slate 900
+    sctx.fillRect(0, 0, staticLayer.width, staticLayer.height);
+
+    sctx.strokeStyle = "rgba(255, 255, 255, 0.05)"; // Very faint white lines
+    sctx.lineWidth = 2;
+    const gridSize = 40;
+    for (let x = gridSize; x < worldWidth; x += gridSize) {
+      sctx.beginPath();
+      sctx.moveTo(x + 0.5, 0);
+      sctx.lineTo(x + 0.5, worldHeight);
+      sctx.stroke();
     }
-    ctx.save();
+    for (let y = gridSize; y < worldHeight; y += gridSize) {
+      sctx.beginPath();
+      sctx.moveTo(0, y + 0.5);
+      sctx.lineTo(worldWidth, y + 0.5);
+      sctx.stroke();
+    }
+
+    // World boundary so the edge of the map reads as a wall, not a void.
+    sctx.strokeStyle = "rgba(56, 189, 248, 0.5)";
+    sctx.lineWidth = 4;
+    sctx.strokeRect(2, 2, worldWidth - 4, worldHeight - 4);
+
+    const obstacles = serverState.obstacles ?? [];
     for (const o of obstacles) {
-      ctx.fillStyle = "#1e293b"; // Slate 800
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.rect(o.x, o.y, o.width, o.height);
-      ctx.fill();
-      ctx.stroke();
+      sctx.fillStyle = "#1e293b"; // Slate 800
+      sctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
+      sctx.lineWidth = 2;
+      sctx.beginPath();
+      sctx.rect(o.x, o.y, o.width, o.height);
+      sctx.fill();
+      sctx.stroke();
 
       // Inner accent line for a bit of arcade depth.
-      ctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(o.x + 3, o.y + 3, o.width - 6, o.height - 6);
+      sctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
+      sctx.lineWidth = 1;
+      sctx.strokeRect(o.x + 3, o.y + 3, o.width - 6, o.height - 6);
     }
-    ctx.restore();
-  }
-
-  function drawGrid() {
-    ctx.save();
-    // Dark Arcade Background
-    ctx.fillStyle = "#0f172a"; // Slate 900
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)"; // Very faint white lines
-    ctx.lineWidth = 2;
-    const gridSize = 40;
-    for (let x = gridSize; x < canvasWidth; x += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(x + 0.5, 0);
-      ctx.lineTo(x + 0.5, canvasHeight);
-      ctx.stroke();
-    }
-    for (let y = gridSize; y < canvasHeight; y += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(0, y + 0.5);
-      ctx.lineTo(canvasWidth, y + 0.5);
-      ctx.stroke();
-    }
-    ctx.restore();
+    sctx.restore();
   }
 
   function drawEntities(state) {
@@ -805,20 +871,26 @@
     }
   }
 
+  let lastScoreboardHtml = null;
+
   function drawScoreboard(state) {
     if (!scoreboardEl) return;
-    if (!state || !state.players || state.players.length === 0) {
-      scoreboardEl.innerHTML = "";
-      return;
+    let html = "";
+    if (state && state.players && state.players.length > 0) {
+      html = state.players
+        .map((player) => {
+          const color = paletteFor(player.teamColor).leader;
+          const name = player.displayName || player.teamColor;
+          const remaining = player.underlings?.length ?? 0;
+          return `<span style="color:${color};text-shadow:0 0 8px ${color}80">${name}: <strong>${remaining}</strong></span>`;
+        })
+        .join("");
     }
-    scoreboardEl.innerHTML = state.players
-      .map((player) => {
-        const color = paletteFor(player.teamColor).leader;
-        const name = player.displayName || player.teamColor;
-        const remaining = player.underlings?.length ?? 0;
-        return `<span style="color:${color};text-shadow:0 0 8px ${color}80">${name}: <strong>${remaining}</strong></span>`;
-      })
-      .join("");
+    // Runs every animation frame; only touch the DOM when the content changes.
+    if (html !== lastScoreboardHtml) {
+      lastScoreboardHtml = html;
+      scoreboardEl.innerHTML = html;
+    }
   }
 
   function drawCircle(x, y, radius, color, isLeader = false) {
