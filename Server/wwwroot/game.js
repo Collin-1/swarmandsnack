@@ -51,6 +51,12 @@
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
 
+  // The canvas is a camera viewport into a larger world; dimensions arrive
+  // with each server snapshot (half world with <=4 players, full with more).
+  let worldWidth = canvasWidth;
+  let worldHeight = canvasHeight;
+  const camera = { x: 0, y: 0 };
+
   let connection;
   let roomId = null;
   let myPlayerId = null;
@@ -202,6 +208,7 @@
       isHost = payload.hostId ? payload.hostId === myPlayerId : true;
       serverState = createEmptyState();
       lobbyCount = 1;
+      needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
       hideOverlay();
       updateStatusFromState(serverState);
@@ -213,6 +220,7 @@
       myPlayerId = payload.player?.playerId ?? myPlayerId;
       isHost = payload.hostId ? payload.hostId === myPlayerId : false;
       serverState = createEmptyState();
+      needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
       hideOverlay();
       updateStatusFromState(serverState);
@@ -269,6 +277,9 @@
       pushStateSnapshot(payload);
       roomId = payload.roomId;
       serverUpdateCount++;
+
+      if (typeof payload.worldWidth === "number") worldWidth = payload.worldWidth;
+      if (typeof payload.worldHeight === "number") worldHeight = payload.worldHeight;
 
       // Sync local leader position from server periodically (soft correction)
       if (myPlayerId && payload.players) {
@@ -553,12 +564,12 @@
     const x = clamp(
       lerp(olderEntity.x, newerEntity.x, t),
       radius,
-      canvasWidth - radius,
+      worldWidth - radius,
     );
     const y = clamp(
       lerp(olderEntity.y, newerEntity.y, t),
       radius,
-      canvasHeight - radius,
+      worldHeight - radius,
     );
 
     return {
@@ -616,12 +627,12 @@
     myLocalLeader.x = clamp(
       myLocalLeader.x + vx * deltaSeconds,
       LEADER_RADIUS,
-      canvasWidth - LEADER_RADIUS,
+      worldWidth - LEADER_RADIUS,
     );
     myLocalLeader.y = clamp(
       myLocalLeader.y + vy * deltaSeconds,
       LEADER_RADIUS,
-      canvasHeight - LEADER_RADIUS,
+      worldHeight - LEADER_RADIUS,
     );
     myLocalLeader.vx = vx;
     myLocalLeader.vy = vy;
@@ -722,51 +733,81 @@
     };
   }
 
-  // The grid and obstacles never change during play, so they are rasterised
-  // once into an offscreen canvas and blitted each frame. Re-rendered only
-  // when the obstacle set changes (0 -> N when the first snapshot arrives).
+  // The world background (grid + room walls) never changes during play, so it
+  // is rasterised once into a world-sized offscreen canvas and the camera's
+  // window into it is blitted each frame. Re-rendered only when the world
+  // size or obstacle set changes (first snapshot, or half <-> full world).
   const staticLayer = document.createElement("canvas");
-  staticLayer.width = canvasWidth;
-  staticLayer.height = canvasHeight;
-  let staticLayerObstacleCount = -1;
+  let staticLayerSignature = null;
+
+  function updateCamera() {
+    camera.x = clamp(
+      myLocalLeader.x - canvasWidth / 2,
+      0,
+      Math.max(0, worldWidth - canvasWidth),
+    );
+    camera.y = clamp(
+      myLocalLeader.y - canvasHeight / 2,
+      0,
+      Math.max(0, worldHeight - canvasHeight),
+    );
+  }
 
   function renderScene() {
-    const obstacleCount = serverState.obstacles?.length ?? 0;
-    if (obstacleCount !== staticLayerObstacleCount) {
-      staticLayerObstacleCount = obstacleCount;
+    const signature = `${worldWidth}x${worldHeight}:${serverState.obstacles?.length ?? 0}`;
+    if (signature !== staticLayerSignature) {
+      staticLayerSignature = signature;
       renderStaticLayer();
     }
-    ctx.drawImage(staticLayer, 0, 0);
+
+    updateCamera();
+    ctx.drawImage(
+      staticLayer,
+      camera.x, camera.y, canvasWidth, canvasHeight,
+      0, 0, canvasWidth, canvasHeight,
+    );
 
     const bufferedState = getBufferedStateForRender();
     const renderState = buildRenderState(bufferedState);
+
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
     drawEntities(renderState);
+    ctx.restore();
+
     drawScoreboard(renderState);
   }
 
   function renderStaticLayer() {
+    staticLayer.width = Math.max(worldWidth, canvasWidth);
+    staticLayer.height = Math.max(worldHeight, canvasHeight);
     const sctx = staticLayer.getContext("2d");
     sctx.save();
 
     // Dark Arcade Background
     sctx.fillStyle = "#0f172a"; // Slate 900
-    sctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    sctx.fillRect(0, 0, staticLayer.width, staticLayer.height);
 
     sctx.strokeStyle = "rgba(255, 255, 255, 0.05)"; // Very faint white lines
     sctx.lineWidth = 2;
     const gridSize = 40;
-    for (let x = gridSize; x < canvasWidth; x += gridSize) {
+    for (let x = gridSize; x < worldWidth; x += gridSize) {
       sctx.beginPath();
       sctx.moveTo(x + 0.5, 0);
-      sctx.lineTo(x + 0.5, canvasHeight);
+      sctx.lineTo(x + 0.5, worldHeight);
       sctx.stroke();
     }
-    for (let y = gridSize; y < canvasHeight; y += gridSize) {
+    for (let y = gridSize; y < worldHeight; y += gridSize) {
       sctx.beginPath();
       sctx.moveTo(0, y + 0.5);
-      sctx.lineTo(canvasWidth, y + 0.5);
+      sctx.lineTo(worldWidth, y + 0.5);
       sctx.stroke();
     }
+
+    // World boundary so the edge of the map reads as a wall, not a void.
+    sctx.strokeStyle = "rgba(56, 189, 248, 0.5)";
+    sctx.lineWidth = 4;
+    sctx.strokeRect(2, 2, worldWidth - 4, worldHeight - 4);
 
     const obstacles = serverState.obstacles ?? [];
     for (const o of obstacles) {
