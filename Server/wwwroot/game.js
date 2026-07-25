@@ -47,6 +47,11 @@
   const mobileControls = document.getElementById("mobileControls");
   const scoreboardEl = document.getElementById("scoreboard");
   const startBtn = document.getElementById("startBtn");
+  const avatarBarEl = document.getElementById("avatarBar");
+  const micBtn = document.getElementById("micBtn");
+  const micIconEl = document.getElementById("micIcon");
+  const micLabelEl = document.getElementById("micLabel");
+  const voiceStatusEl = document.getElementById("voiceStatus");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -187,9 +192,11 @@
       setPendingDirection("none");
       lastDirectionSent = "none";
       resetSnapshotPipeline();
+      VoiceClient.reset();
     });
 
     await connection.start();
+    VoiceClient.attach(connection, myPlayerId);
     setStatus("Connected. Create or join a game.");
     flushDirection();
 
@@ -206,6 +213,7 @@
       roomId = payload.roomId;
       myPlayerId = payload.player.playerId;
       isHost = payload.hostId ? payload.hostId === myPlayerId : true;
+      VoiceClient.setSelfId(myPlayerId);
       serverState = createEmptyState();
       lobbyCount = 1;
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
@@ -219,6 +227,7 @@
       roomId = payload.roomId;
       myPlayerId = payload.player?.playerId ?? myPlayerId;
       isHost = payload.hostId ? payload.hostId === myPlayerId : false;
+      VoiceClient.setSelfId(myPlayerId);
       serverState = createEmptyState();
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
@@ -240,6 +249,8 @@
       if (payload.hostId && myPlayerId) {
         isHost = payload.hostId === myPlayerId;
       }
+      // Adopt the mic states of players who were already here.
+      VoiceClient.seedMicStates(payload.players);
       updateStatusFromState({
         isActive: serverState.isActive,
         winnerId: serverState.winnerId,
@@ -280,6 +291,10 @@
 
       if (typeof payload.worldWidth === "number") worldWidth = payload.worldWidth;
       if (typeof payload.worldHeight === "number") worldHeight = payload.worldHeight;
+
+      // The snapshot roster is the authoritative "who is in this room" list, in
+      // the lobby and mid-match alike, so voice peering follows it.
+      syncVoiceRoster(payload.players);
 
       // Sync local leader position from server periodically (soft correction)
       if (myPlayerId && payload.players) {
@@ -776,6 +791,8 @@
     ctx.restore();
 
     drawScoreboard(renderState);
+    // Avatars follow the newest roster rather than the delayed render state.
+    drawAvatars(serverState);
   }
 
   function renderStaticLayer() {
@@ -890,6 +907,105 @@
     if (html !== lastScoreboardHtml) {
       lastScoreboardHtml = html;
       scoreboardEl.innerHTML = html;
+    }
+  }
+
+  // ---- Voice roster + avatars -------------------------------------------
+
+  let lastVoiceRosterKey = null;
+
+  function syncVoiceRoster(players) {
+    const ids = (players ?? []).map((p) => p.connectionId).filter(Boolean);
+    const key = ids.slice().sort().join(",");
+    if (key === lastVoiceRosterKey) return;
+    lastVoiceRosterKey = key;
+    VoiceClient.syncPeers(ids);
+  }
+
+  const avatarEls = new Map();
+  let avatarRosterKey = null;
+
+  function rebuildAvatars(players) {
+    avatarEls.clear();
+    avatarBarEl.innerHTML = "";
+    for (const player of players) {
+      const colors = paletteFor(player.teamColor);
+      const name = player.displayName || player.teamColor;
+
+      const wrap = document.createElement("div");
+      wrap.className = "avatar";
+      wrap.dataset.playerId = player.connectionId;
+      if (player.connectionId === myPlayerId) wrap.classList.add("is-self");
+
+      const disc = document.createElement("div");
+      disc.className = "avatar-disc";
+      disc.style.background = colors.leader;
+      disc.textContent = (name[0] || "?").toUpperCase();
+
+      const mic = document.createElement("span");
+      mic.className = "avatar-mic";
+      disc.appendChild(mic);
+
+      const label = document.createElement("span");
+      label.className = "avatar-name";
+      label.textContent = player.connectionId === myPlayerId ? `${name} (you)` : name;
+      label.title = name;
+
+      wrap.appendChild(disc);
+      wrap.appendChild(label);
+      avatarBarEl.appendChild(wrap);
+      avatarEls.set(player.connectionId, { wrap, mic });
+    }
+  }
+
+  function drawAvatars(state) {
+    if (!avatarBarEl) return;
+    const players = state?.players ?? [];
+
+    // Rebuild only when the roster itself changes; per-frame work below is
+    // limited to class/text flips that are cheap and guarded.
+    const key = players
+      .map((p) => `${p.connectionId}:${p.displayName}:${p.teamColor}`)
+      .join("|");
+    if (key !== avatarRosterKey) {
+      avatarRosterKey = key;
+      rebuildAvatars(players);
+    }
+
+    for (const [id, el] of avatarEls) {
+      const micOn = VoiceClient.isMicOn(id);
+      const speaking = VoiceClient.isSpeaking(id);
+      if (el.wrap._micOn !== micOn) {
+        el.wrap._micOn = micOn;
+        el.wrap.classList.toggle("muted", !micOn);
+        el.mic.textContent = micOn ? "🎤" : "🔇";
+      }
+      if (el.wrap._speaking !== speaking) {
+        el.wrap._speaking = speaking;
+        el.wrap.classList.toggle("speaking", speaking);
+      }
+    }
+
+    updateMicButton();
+  }
+
+  let lastMicLabel = null;
+  let lastVoiceStatus = null;
+
+  function updateMicButton() {
+    if (!micBtn) return;
+    const live = VoiceClient.isMicLive();
+    const label = live ? "Mic On" : "Enable Mic";
+    if (label !== lastMicLabel) {
+      lastMicLabel = label;
+      micLabelEl.textContent = label;
+      micIconEl.textContent = live ? "🎤" : "🔇";
+      micBtn.classList.toggle("live", live);
+    }
+    const status = VoiceClient.getStatus();
+    if (voiceStatusEl && status !== lastVoiceStatus) {
+      lastVoiceStatus = status;
+      voiceStatusEl.textContent = status;
     }
   }
 
@@ -1235,6 +1351,24 @@
         await connection.invoke("StartGame");
       } catch (err) {
         console.error(err);
+      }
+    });
+  }
+
+  if (micBtn) {
+    if (!VoiceClient.isSupported()) {
+      micBtn.disabled = true;
+      micBtn.title = window.isSecureContext
+        ? "Voice chat is not supported in this browser."
+        : "Voice chat needs HTTPS (or localhost).";
+    }
+    micBtn.addEventListener("click", async () => {
+      micBtn.disabled = true;
+      try {
+        await VoiceClient.toggleMic();
+      } finally {
+        micBtn.disabled = !VoiceClient.isSupported();
+        updateMicButton();
       }
     });
   }
