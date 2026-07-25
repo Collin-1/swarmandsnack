@@ -512,6 +512,10 @@ public class GameManager
         var serverTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var snapshotId = room.AllocateSnapshotId();
         var players = room.Players
+            // Stable join order: the room's dictionary has no guaranteed
+            // enumeration order, and a shuffling roster would make the
+            // scoreboard and voice avatars jump around between snapshots.
+            .OrderBy(player => player.SpawnIndex)
             .Select(player => new PlayerStateDto(
                 player.ConnectionId,
                 player.DisplayName,

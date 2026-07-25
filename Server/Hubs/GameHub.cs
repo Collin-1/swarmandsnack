@@ -8,6 +8,9 @@ namespace SwarmAndSnack.Server.Hubs;
 public class GameHub : Hub
 {
     private static readonly ConcurrentDictionary<string, string> ConnectionRooms = new();
+    // Last announced microphone state per connection, so players joining later
+    // see who is already unmuted without waiting for the next toggle.
+    private static readonly ConcurrentDictionary<string, bool> VoiceStates = new();
     private readonly GameManager _gameManager;
     private readonly ILogger<GameHub> _logger;
 
@@ -19,12 +22,27 @@ public class GameHub : Hub
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        VoiceStates.TryRemove(Context.ConnectionId, out _);
+
         if (ConnectionRooms.TryRemove(Context.ConnectionId, out var roomId))
         {
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomId);
+            _gameManager.HandleDisconnect(Context.ConnectionId);
+
+            // Tell the room who left so peers can tear down their voice
+            // connections and drop the avatar immediately.
+            await Clients.Group(roomId).SendAsync("PlayerLeft", new
+            {
+                roomId,
+                playerId = Context.ConnectionId
+            });
+            await BroadcastLobbyUpdate(roomId);
+        }
+        else
+        {
+            _gameManager.HandleDisconnect(Context.ConnectionId);
         }
 
-        _gameManager.HandleDisconnect(Context.ConnectionId);
         await base.OnDisconnectedAsync(exception);
     }
 
@@ -133,6 +151,48 @@ public class GameHub : Hub
         await Clients.Caller.SendAsync("GameStateUpdated", state);
     }
 
+    /// <summary>
+    /// Relays a WebRTC signalling message (offer/answer/ICE candidate) to one
+    /// peer. The server never inspects the payload; it only guarantees both
+    /// parties are in the same room so a connection can't be probed from outside.
+    /// </summary>
+    public async Task SendVoiceSignal(string targetConnectionId, string payload)
+    {
+        if (string.IsNullOrEmpty(targetConnectionId) || targetConnectionId == Context.ConnectionId)
+        {
+            return;
+        }
+
+        if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var roomId) ||
+            !ConnectionRooms.TryGetValue(targetConnectionId, out var targetRoomId) ||
+            roomId != targetRoomId)
+        {
+            return;
+        }
+
+        await Clients.Client(targetConnectionId).SendAsync("VoiceSignal", new
+        {
+            from = Context.ConnectionId,
+            payload
+        });
+    }
+
+    /// <summary>Announces whether this player's microphone is live, for avatar UI.</summary>
+    public async Task SetVoiceState(bool micEnabled)
+    {
+        if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var roomId))
+        {
+            return;
+        }
+
+        VoiceStates[Context.ConnectionId] = micEnabled;
+        await Clients.Group(roomId).SendAsync("VoiceStateChanged", new
+        {
+            playerId = Context.ConnectionId,
+            micEnabled
+        });
+    }
+
     private async Task BroadcastLobbyUpdate(string roomId)
     {
         if (!_gameManager.TryGetRoom(roomId, out var room) || room is null)
@@ -141,6 +201,7 @@ public class GameHub : Hub
         }
 
         var lobby = room.Players
+            .OrderBy(p => p.SpawnIndex)
             .Select(MapPlayer)
             .ToList();
 
@@ -156,7 +217,8 @@ public class GameHub : Hub
     {
         playerId = player.ConnectionId,
         player.DisplayName,
-        teamColor = player.TeamColor
+        teamColor = player.TeamColor,
+        micEnabled = VoiceStates.TryGetValue(player.ConnectionId, out var mic) && mic
     };
 
     private static Direction ParseDirection(string? input)
