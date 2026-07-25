@@ -12,38 +12,48 @@ public readonly record struct LevelRoom(float X, float Y, float Width, float Hei
 }
 
 /// <summary>
-/// Static world layout: an 8-room map (modelled on the design sketch) inside a
-/// 1920x1280 world. Rooms 1-4 occupy the left half, rooms 5-8 the right half,
-/// so a match with 4 or fewer players can seal the world at x = HalfWorldWidth
-/// and still contain every occupied room.
+/// Static world layout: an 8-room map inside a 2880x1920 world, plus
+/// free-standing wall shapes (L, T, U, cross, staircase, bars, pillars) filling
+/// the space between rooms. Rooms 1-4 and their surrounding shapes sit entirely
+/// in the left half, rooms 5-8 in the right, so a match with 4 or fewer players
+/// can seal the world at x = HalfWorldWidth and still contain every open room.
+///
+/// Shapes are composed from axis-aligned rectangles because collision is
+/// circle-vs-AABB; staircases stand in for diagonals.
 /// </summary>
 public static class Level
 {
     // Room index = spawn order (player N gets room N).
-    // Left half (x < 960):                       Sketch label
     public static readonly IReadOnlyList<LevelRoom> Rooms = new[]
     {
-        new LevelRoom(80f, 80f, 440f, 340f, DoorSide.Bottom),   // 1: top-left
-        new LevelRoom(80f, 520f, 280f, 380f, DoorSide.Right),   // 2: left edge
-        new LevelRoom(240f, 960f, 480f, 240f, DoorSide.Top),    // 3: bottom-left
-        new LevelRoom(560f, 480f, 340f, 360f, DoorSide.Left),   // 4: centre
-        // Right half (x > 960):
-        new LevelRoom(1040f, 920f, 520f, 280f, DoorSide.Top),   // 5: bottom-centre
-        new LevelRoom(1600f, 520f, 260f, 420f, DoorSide.Left),  // 6: right edge
-        new LevelRoom(1400f, 80f, 440f, 320f, DoorSide.Bottom), // 7: top-right
-        new LevelRoom(1060f, 80f, 240f, 400f, DoorSide.Bottom), // 8: top-centre, tall
+        // Left half (x < 1440)
+        new LevelRoom(120f, 120f, 520f, 400f, DoorSide.Bottom),   // 1: top-left
+        new LevelRoom(120f, 700f, 380f, 520f, DoorSide.Right),    // 2: mid-left
+        new LevelRoom(300f, 1420f, 600f, 340f, DoorSide.Top),     // 3: bottom-left
+        new LevelRoom(780f, 640f, 480f, 480f, DoorSide.Left),     // 4: centre-left
+        // Right half (x > 1440)
+        new LevelRoom(1560f, 1400f, 640f, 380f, DoorSide.Top),    // 5: bottom-centre
+        new LevelRoom(2400f, 760f, 360f, 560f, DoorSide.Left),    // 6: right edge
+        new LevelRoom(2180f, 140f, 560f, 420f, DoorSide.Bottom),  // 7: top-right
+        new LevelRoom(1600f, 140f, 340f, 540f, DoorSide.Bottom),  // 8: top-centre, tall
     };
 
     public static readonly IReadOnlyList<Vector2> SpawnPoints =
         Rooms.Select(r => r.Center).ToList();
 
-    /// <summary>Walls for the left-half rooms only (half-world matches).</summary>
-    public static readonly IReadOnlyList<Obstacle> HalfWorldObstacles =
-        Rooms.Take(4).SelectMany(BuildWalls).ToList();
+    private const float T = 24f; // default wall thickness for free-standing shapes
 
-    /// <summary>Walls for every room (full-world matches).</summary>
+    /// <summary>Free-standing walls in the left half (always present).</summary>
+    private static readonly IReadOnlyList<Obstacle> LeftShapes = BuildLeftShapes().ToList();
+
+    /// <summary>Free-standing walls in the right half (full-world matches only).</summary>
+    private static readonly IReadOnlyList<Obstacle> RightShapes = BuildRightShapes().ToList();
+
+    public static readonly IReadOnlyList<Obstacle> HalfWorldObstacles =
+        Rooms.Take(4).SelectMany(BuildWalls).Concat(LeftShapes).ToList();
+
     public static readonly IReadOnlyList<Obstacle> FullWorldObstacles =
-        Rooms.SelectMany(BuildWalls).ToList();
+        Rooms.SelectMany(BuildWalls).Concat(LeftShapes).Concat(RightShapes).ToList();
 
     public static float WorldWidthFor(int playerCount) =>
         playerCount <= GameConstants.HalfWorldMaxPlayers
@@ -52,6 +62,80 @@ public static class Level
 
     public static IReadOnlyList<Obstacle> ObstaclesFor(float worldWidth) =>
         worldWidth <= GameConstants.HalfWorldWidth ? HalfWorldObstacles : FullWorldObstacles;
+
+    private static IEnumerable<Obstacle> BuildLeftShapes()
+    {
+        foreach (var o in LShape(700f, 180f, 260f, 220f, T)) yield return o;
+        foreach (var o in Staircase(1060f, 160f, 3, 120f, 110f, 22f)) yield return o;
+        foreach (var o in Cross(580f, 1180f, 210f, 200f, T)) yield return o;
+        foreach (var o in TShape(1000f, 1460f, 300f, 190f, T)) yield return o;
+        yield return new Obstacle(1350f, 520f, 22f, 560f);   // long vertical line
+        yield return new Obstacle(180f, 1330f, 22f, 300f);   // short vertical line
+        yield return new Obstacle(560f, 560f, 64f, 64f);     // pillar
+        yield return new Obstacle(1310f, 1240f, 70f, 70f);   // pillar
+    }
+
+    private static IEnumerable<Obstacle> BuildRightShapes()
+    {
+        foreach (var o in UShape(1990f, 200f, 180f, 270f, T)) yield return o;
+        foreach (var o in Staircase(1500f, 780f, 4, 120f, 110f, 22f)) yield return o;
+        foreach (var o in Cross(2040f, 1150f, 220f, 215f, 26f)) yield return o;
+        foreach (var o in LShape(2500f, 1450f, 260f, 220f, T, flipX: true)) yield return o;
+        foreach (var o in TShape(2250f, 600f, 300f, 140f, T)) yield return o;
+        yield return new Obstacle(1450f, 1250f, 300f, 20f);  // long horizontal line
+        yield return new Obstacle(2820f, 700f, 20f, 420f);   // wall-hugging line
+        yield return new Obstacle(2650f, 1760f, 70f, 70f);   // pillar
+        yield return new Obstacle(1470f, 1500f, 64f, 64f);   // pillar
+    }
+
+    // ---- Shape builders -----------------------------------------------------
+
+    /// <summary>Corner piece: one horizontal arm and one vertical arm.</summary>
+    private static IEnumerable<Obstacle> LShape(
+        float x, float y, float w, float h, float t, bool flipX = false, bool flipY = false)
+    {
+        var armY = flipY ? y + h - t : y;
+        var armX = flipX ? x + w - t : x;
+        yield return new Obstacle(x, armY, w, t);
+        yield return new Obstacle(armX, y, t, h);
+    }
+
+    /// <summary>Bar across the top with a stem descending from its centre.</summary>
+    private static IEnumerable<Obstacle> TShape(float x, float y, float w, float h, float t)
+    {
+        yield return new Obstacle(x, y, w, t);
+        yield return new Obstacle(x + w / 2f - t / 2f, y, t, h);
+    }
+
+    /// <summary>Three sides of a box, open at the top.</summary>
+    private static IEnumerable<Obstacle> UShape(float x, float y, float w, float h, float t)
+    {
+        yield return new Obstacle(x, y, t, h);
+        yield return new Obstacle(x + w - t, y, t, h);
+        yield return new Obstacle(x, y + h - t, w, t);
+    }
+
+    /// <summary>Plus sign: intersecting horizontal and vertical bars.</summary>
+    private static IEnumerable<Obstacle> Cross(float x, float y, float w, float h, float t)
+    {
+        yield return new Obstacle(x, y + h / 2f - t / 2f, w, t);
+        yield return new Obstacle(x + w / 2f - t / 2f, y, t, h);
+    }
+
+    /// <summary>Stepped diagonal running right and down, as treads and risers.</summary>
+    private static IEnumerable<Obstacle> Staircase(
+        float x, float y, int steps, float stepW, float stepH, float t)
+    {
+        var cx = x;
+        var cy = y;
+        for (var i = 0; i < steps; i++)
+        {
+            yield return new Obstacle(cx, cy, stepW, t);       // tread
+            cx += stepW - t;
+            yield return new Obstacle(cx, cy, t, stepH);       // riser
+            cy += stepH - t;
+        }
+    }
 
     // Emit the four wall rectangles of a room, splitting the door side into
     // two segments around a centred gap.
