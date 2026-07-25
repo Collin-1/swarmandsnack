@@ -34,7 +34,7 @@ public class GameManager
         var player = CreatePlayer(connectionId, ColorKeyForIndex(0), displayName);
         player.SpawnIndex = 0;
         room.TryAddPlayer(player);
-        InitializePlayerEntities(player, player.SpawnIndex);
+        InitializePlayerEntities(player, player.SpawnIndex, room.EffectiveWorldWidth);
         _rooms[roomId] = room;
         _logger.LogInformation("Created room {RoomId} by {ConnectionId}", roomId, connectionId);
         return (room, player);
@@ -66,7 +66,9 @@ public class GameManager
 
         player = CreatePlayer(connectionId, ColorKeyForIndex(existingCount), displayName);
         player.SpawnIndex = existingCount;
-        InitializePlayerEntities(player, player.SpawnIndex);
+        // The joiner may be the one that opens the right half, so size for the
+        // roster this player is about to join.
+        InitializePlayerEntities(player, player.SpawnIndex, Level.WorldWidthFor(existingCount + 1));
 
         if (!room.TryAddPlayer(player))
         {
@@ -229,37 +231,107 @@ public class GameManager
         return new Player(connectionId, team, displayName ?? team);
     }
 
-    private static void InitializePlayerEntities(Player player, int spawnIndex, int underlingCount = 0)
+    // Underlings are kept this far from every leader's starting room so nobody
+    // can clear a swarm in the opening seconds just by standing still.
+    private const float ScatterClearanceFromSpawns = 200f;
+
+    private static void InitializePlayerEntities(Player player, int spawnIndex, float worldWidth, int underlingCount = 0)
     {
-        // Spawn at the centre of the player's room; underling offsets (±60)
-        // stay inside every room's interior by construction.
+        // The leader starts in its own room; the swarm is scattered across the
+        // whole open world instead of huddling around it, so a swarm can't be
+        // wiped out in one pass through a single room.
         var spawn = Level.SpawnPoints[spawnIndex % Level.SpawnPoints.Count];
-        var leaderX = spawn.X;
-        var leaderY = spawn.Y;
-        player.Leader.Position = new Vector2(leaderX, leaderY);
+        player.Leader.Position = spawn;
         player.Leader.Velocity = Vector2.Zero;
         player.Underlings.Clear();
 
+        var obstacles = Level.ObstaclesFor(worldWidth);
         var count = underlingCount > 0
             ? underlingCount
             : Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
         for (var i = 0; i < count; i++)
         {
-            var offsetX = RandomFloat(-60f, 60f);
-            var offsetY = RandomFloat(-60f, 60f);
-            var position = new Vector2(leaderX + offsetX, leaderY + offsetY);
-            var direction = RandomUnitVector();
-            var velocity = direction * GameConstants.UnderlingSpeed;
+            var position = FindScatterPosition(worldWidth, obstacles, spawn);
+            var velocity = RandomUnitVector() * GameConstants.UnderlingSpeed;
             player.Underlings.Add(new Underling(player.ConnectionId, position, velocity));
         }
     }
 
+    /// <summary>
+    /// Rejection-samples a free point anywhere in the open world: clear of every
+    /// wall and not on a leader's doorstep.
+    /// </summary>
+    private static Vector2 FindScatterPosition(float worldWidth, IReadOnlyList<Obstacle> obstacles, Vector2 fallbackNear)
+    {
+        var radius = GameConstants.UnderlingRadius;
+        var margin = radius + 8f;
+        var wallClearance = radius + 6f;
+
+        for (var attempt = 0; attempt < 300; attempt++)
+        {
+            var candidate = new Vector2(
+                RandomFloat(margin, worldWidth - margin),
+                RandomFloat(margin, GameConstants.WorldHeight - margin));
+
+            if (OverlapsAnyObstacle(candidate, wallClearance, obstacles))
+            {
+                continue;
+            }
+
+            if (IsNearAnyStartingRoom(candidate, worldWidth))
+            {
+                continue;
+            }
+
+            return candidate;
+        }
+
+        // Open space is plentiful, so this should not happen; keep the old
+        // behaviour rather than risk placing an underling inside a wall.
+        return new Vector2(
+            Math.Clamp(fallbackNear.X + RandomFloat(-60f, 60f), margin, worldWidth - margin),
+            Math.Clamp(fallbackNear.Y + RandomFloat(-60f, 60f), margin, GameConstants.WorldHeight - margin));
+    }
+
+    private static bool OverlapsAnyObstacle(Vector2 point, float clearance, IReadOnlyList<Obstacle> obstacles)
+    {
+        foreach (var obstacle in obstacles)
+        {
+            if (Vector2.DistanceSquared(point, obstacle.ClosestPoint(point)) < clearance * clearance)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool IsNearAnyStartingRoom(Vector2 point, float worldWidth)
+    {
+        foreach (var spawn in Level.SpawnPoints)
+        {
+            // Rooms outside the active world half aren't in play.
+            if (spawn.X > worldWidth)
+            {
+                continue;
+            }
+
+            if (Vector2.DistanceSquared(point, spawn) <
+                ScatterClearanceFromSpawns * ScatterClearanceFromSpawns)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void ResetRoom(GameRoom room)
     {
+        // Called just before Start(), so this is the width the match will freeze.
+        var worldWidth = room.EffectiveWorldWidth;
         var sharedCount = Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
         foreach (var player in room.Players)
         {
-            InitializePlayerEntities(player, player.SpawnIndex, sharedCount);
+            InitializePlayerEntities(player, player.SpawnIndex, worldWidth, sharedCount);
         }
         room.Touch();
     }

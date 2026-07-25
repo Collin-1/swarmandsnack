@@ -4,11 +4,15 @@ public enum DoorSide { Top, Bottom, Left, Right }
 
 /// <summary>
 /// A rectangular room whose walls are generated as obstacles, with a door gap
-/// on one side. Players spawn at their room's centre.
+/// on each listed side. Players spawn at their room's centre. Rooms with two
+/// doors are through-routes rather than dead ends, so a swarm can't be cornered
+/// against a single exit.
 /// </summary>
-public readonly record struct LevelRoom(float X, float Y, float Width, float Height, DoorSide Door)
+public readonly record struct LevelRoom(
+    float X, float Y, float Width, float Height, IReadOnlyList<DoorSide> Doors)
 {
     public Vector2 Center => new(X + Width / 2f, Y + Height / 2f);
+    public bool HasDoor(DoorSide side) => Doors.Contains(side);
 }
 
 /// <summary>
@@ -23,19 +27,29 @@ public readonly record struct LevelRoom(float X, float Y, float Width, float Hei
 /// </summary>
 public static class Level
 {
-    // Room index = spawn order (player N gets room N).
+    // Room index = spawn order (player N gets room N). Most rooms have two
+    // doors so they can be entered and left from different sides.
+    private static readonly DoorSide[] BottomRight = { DoorSide.Bottom, DoorSide.Right };
+    private static readonly DoorSide[] TopRight = { DoorSide.Top, DoorSide.Right };
+    private static readonly DoorSide[] LeftRight = { DoorSide.Left, DoorSide.Right };
+    private static readonly DoorSide[] TopLeft = { DoorSide.Top, DoorSide.Left };
+    private static readonly DoorSide[] BottomLeft = { DoorSide.Bottom, DoorSide.Left };
+    private static readonly DoorSide[] RightOnly = { DoorSide.Right };
+    private static readonly DoorSide[] LeftOnly = { DoorSide.Left };
+    private static readonly DoorSide[] BottomOnly = { DoorSide.Bottom };
+
     public static readonly IReadOnlyList<LevelRoom> Rooms = new[]
     {
         // Left half (x < 1440)
-        new LevelRoom(120f, 120f, 520f, 400f, DoorSide.Bottom),   // 1: top-left
-        new LevelRoom(120f, 700f, 380f, 520f, DoorSide.Right),    // 2: mid-left
-        new LevelRoom(300f, 1420f, 600f, 340f, DoorSide.Top),     // 3: bottom-left
-        new LevelRoom(780f, 640f, 480f, 480f, DoorSide.Left),     // 4: centre-left
+        new LevelRoom(120f, 120f, 520f, 400f, BottomRight),   // 1: top-left
+        new LevelRoom(120f, 700f, 380f, 520f, RightOnly),     // 2: mid-left
+        new LevelRoom(300f, 1420f, 600f, 340f, TopRight),     // 3: bottom-left
+        new LevelRoom(780f, 640f, 480f, 480f, LeftRight),     // 4: centre-left, through-route
         // Right half (x > 1440)
-        new LevelRoom(1560f, 1400f, 640f, 380f, DoorSide.Top),    // 5: bottom-centre
-        new LevelRoom(2400f, 760f, 360f, 560f, DoorSide.Left),    // 6: right edge
-        new LevelRoom(2180f, 140f, 560f, 420f, DoorSide.Bottom),  // 7: top-right
-        new LevelRoom(1600f, 140f, 340f, 540f, DoorSide.Bottom),  // 8: top-centre, tall
+        new LevelRoom(1560f, 1400f, 640f, 380f, TopLeft),     // 5: bottom-centre
+        new LevelRoom(2400f, 760f, 360f, 560f, LeftOnly),     // 6: right edge
+        new LevelRoom(2180f, 140f, 560f, 420f, BottomLeft),   // 7: top-right
+        new LevelRoom(1600f, 140f, 340f, 540f, BottomOnly),   // 8: top-centre, tall
     };
 
     public static readonly IReadOnlyList<Vector2> SpawnPoints =
@@ -149,7 +163,7 @@ public static class Level
         var bottom = r.Y + r.Height;
 
         // Top
-        if (r.Door == DoorSide.Top)
+        if (r.HasDoor(DoorSide.Top))
         {
             yield return new Obstacle(r.X, r.Y, cx - d / 2f - r.X, t);
             yield return new Obstacle(cx + d / 2f, r.Y, right - (cx + d / 2f), t);
@@ -160,7 +174,7 @@ public static class Level
         }
 
         // Bottom
-        if (r.Door == DoorSide.Bottom)
+        if (r.HasDoor(DoorSide.Bottom))
         {
             yield return new Obstacle(r.X, bottom - t, cx - d / 2f - r.X, t);
             yield return new Obstacle(cx + d / 2f, bottom - t, right - (cx + d / 2f), t);
@@ -171,7 +185,7 @@ public static class Level
         }
 
         // Left
-        if (r.Door == DoorSide.Left)
+        if (r.HasDoor(DoorSide.Left))
         {
             yield return new Obstacle(r.X, r.Y, t, cy - d / 2f - r.Y);
             yield return new Obstacle(r.X, cy + d / 2f, t, bottom - (cy + d / 2f));
@@ -182,7 +196,7 @@ public static class Level
         }
 
         // Right
-        if (r.Door == DoorSide.Right)
+        if (r.HasDoor(DoorSide.Right))
         {
             yield return new Obstacle(right - t, r.Y, t, cy - d / 2f - r.Y);
             yield return new Obstacle(right - t, cy + d / 2f, t, bottom - (cy + d / 2f));
