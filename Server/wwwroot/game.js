@@ -802,24 +802,24 @@
     sctx.save();
 
     // Dark Arcade Background
-    sctx.fillStyle = "#0f172a"; // Slate 900
+    sctx.fillStyle = "#0b1220";
     sctx.fillRect(0, 0, staticLayer.width, staticLayer.height);
 
-    sctx.strokeStyle = "rgba(255, 255, 255, 0.05)"; // Very faint white lines
-    sctx.lineWidth = 2;
-    const gridSize = 40;
-    for (let x = gridSize; x < worldWidth; x += gridSize) {
-      sctx.beginPath();
-      sctx.moveTo(x + 0.5, 0);
-      sctx.lineTo(x + 0.5, worldHeight);
-      sctx.stroke();
-    }
-    for (let y = gridSize; y < worldHeight; y += gridSize) {
-      sctx.beginPath();
-      sctx.moveTo(0, y + 0.5);
-      sctx.lineTo(worldWidth, y + 0.5);
-      sctx.stroke();
-    }
+    // Soft glow through the middle of the world so the floor reads as lit
+    // rather than flat black at this scale.
+    const cx = worldWidth / 2;
+    const cy = worldHeight / 2;
+    const glow = sctx.createRadialGradient(
+      cx, cy, 0,
+      cx, cy, Math.max(worldWidth, worldHeight) * 0.72,
+    );
+    glow.addColorStop(0, "rgba(30, 70, 120, 0.38)");
+    glow.addColorStop(0.55, "rgba(18, 40, 76, 0.18)");
+    glow.addColorStop(1, "rgba(8, 14, 26, 0)");
+    sctx.fillStyle = glow;
+    sctx.fillRect(0, 0, worldWidth, worldHeight);
+
+    drawHexFloor(sctx);
 
     // World boundary so the edge of the map reads as a wall, not a void.
     sctx.strokeStyle = "rgba(56, 189, 248, 0.5)";
@@ -842,6 +842,66 @@
       sctx.strokeRect(o.x + 3, o.y + 3, o.width - 6, o.height - 6);
     }
     sctx.restore();
+  }
+
+  // Hexagonal honeycomb floor, painted as one repeating tile.
+  //
+  // Drawing every hex as a path across the whole world (~2400 hexes, ~14k
+  // segments) cost ~380ms to build and dropped steady-state to 56fps, because a
+  // path that large keeps the canvas off the fast path and the per-frame blit
+  // pays for it. A small tile + createPattern is one fillRect instead.
+  //
+  // TILE_W/TILE_H are integers so the pattern repeats without seams; the hex
+  // radius is derived from them, which is a <0.1% distortion from a true
+  // hexagon and not visible.
+  const HEX_TILE_W = 45;
+  const HEX_TILE_H = 78; // two rows: 2 * 1.5R
+  let hexPattern = null;
+
+  function getHexPattern(sctx) {
+    if (hexPattern) return hexPattern;
+
+    const R = HEX_TILE_H / 3; // 26
+    const rowStep = R * 1.5;
+    const tile = document.createElement("canvas");
+    tile.width = HEX_TILE_W;
+    tile.height = HEX_TILE_H;
+    const tctx = tile.getContext("2d");
+
+    const corners = [];
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 180) * (60 * i - 90); // pointy-top
+      corners.push([R * Math.cos(angle), R * Math.sin(angle)]);
+    }
+
+    tctx.beginPath();
+    // Rows -1..2 and columns -1..1 so hexes overlapping the tile edges are
+    // drawn too; the grid is periodic, so the tile then butts up seamlessly.
+    for (let row = -1; row <= 2; row++) {
+      const y = row * rowStep;
+      const xOffset = Math.abs(row % 2) === 1 ? HEX_TILE_W / 2 : 0;
+      for (let col = -1; col <= 1; col++) {
+        const x = xOffset + col * HEX_TILE_W;
+        tctx.moveTo(x + corners[0][0], y + corners[0][1]);
+        for (let i = 1; i < 6; i++) tctx.lineTo(x + corners[i][0], y + corners[i][1]);
+        tctx.closePath();
+      }
+    }
+    // Single stroke: per-hex strokes would double-paint shared edges and the
+    // translucent lines would build up unevenly.
+    tctx.strokeStyle = "rgba(56, 189, 248, 0.13)";
+    tctx.lineWidth = 1.5;
+    tctx.stroke();
+
+    hexPattern = sctx.createPattern(tile, "repeat");
+    return hexPattern;
+  }
+
+  function drawHexFloor(sctx) {
+    const pattern = getHexPattern(sctx);
+    if (!pattern) return;
+    sctx.fillStyle = pattern;
+    sctx.fillRect(0, 0, worldWidth, worldHeight);
   }
 
   function drawEntities(state) {
