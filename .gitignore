@@ -2,6 +2,9 @@
 bin/
 obj/
 
+# Design handoff pack (regenerated screenshots + brief, not part of the app)
+design-handoff/
+
 # User-specific files
 *.user
 *.userosscache
