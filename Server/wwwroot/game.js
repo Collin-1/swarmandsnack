@@ -1062,7 +1062,11 @@
       micIconEl.textContent = live ? "🎤" : "🔇";
       micBtn.classList.toggle("live", live);
     }
-    const status = VoiceClient.getStatus();
+    // Playback blocked outranks the mic state: the player is silently deaf and
+    // any click fixes it, so tell them that rather than "Mic live".
+    const status = VoiceClient.isAudioBlocked()
+      ? "Click to enable sound"
+      : VoiceClient.getStatus();
     if (voiceStatusEl && status !== lastVoiceStatus) {
       lastVoiceStatus = status;
       voiceStatusEl.textContent = status;
