@@ -11,7 +11,21 @@ public record GameStateDto(
     IReadOnlyCollection<ObstacleDto> Obstacles,
     float WorldWidth,
     float WorldHeight,
-    IReadOnlyCollection<RoomDto> Rooms
+    IReadOnlyCollection<RoomDto> Rooms,
+    IReadOnlyCollection<ThicketDto> Thickets
+);
+
+/// <summary>
+/// Undergrowth. Radius is the solid core the server collides against; RadiusX
+/// and RadiusY are the wider canopy the client draws around it.
+/// </summary>
+public record ThicketDto(
+    float X,
+    float Y,
+    float Radius,
+    float RadiusX,
+    float RadiusY,
+    int Seed
 );
 
 /// <summary>

@@ -16,6 +16,18 @@ public readonly record struct LevelRoom(
 }
 
 /// <summary>
+/// A clump of undergrowth. The canopy the client draws is an ellipse of
+/// VisualRadiusX by VisualRadiusY, but only the circular core of Radius is
+/// solid: you can push through the ragged fringe and skirt the edge, and cannot
+/// cross the middle. Seed lets the client grow the same bushes every time.
+/// </summary>
+public readonly record struct Thicket(
+    float X, float Y, float Radius, float VisualRadiusX, float VisualRadiusY, int Seed)
+{
+    public Vector2 Center => new(X, Y);
+}
+
+/// <summary>
 /// Static world layout: an 8-room map inside a 2880x1920 world, plus
 /// free-standing wall shapes (L, T, U, cross, staircase, bars, pillars) filling
 /// the space between rooms. Rooms 1-4 and their surrounding shapes sit entirely
@@ -68,6 +80,76 @@ public static class Level
 
     public static readonly IReadOnlyList<Obstacle> FullWorldObstacles =
         Rooms.SelectMany(BuildWalls).Concat(LeftShapes).Concat(RightShapes).ToList();
+
+    // Fraction of the canopy that is actually solid. The rest is fringe you can
+    // walk through, so a thicket reads as something to go around rather than an
+    // invisible wall.
+    private const float ThicketCoreRatio = 0.6f;
+
+    /// <summary>
+    /// Grown once, in the full world, from a fixed seed so the layout is
+    /// identical on every run. The half world takes the ones that fit inside it,
+    /// which keeps the left half looking the same in both modes.
+    /// </summary>
+    public static readonly IReadOnlyList<Thicket> FullWorldThickets = BuildThickets();
+
+    public static readonly IReadOnlyList<Thicket> HalfWorldThickets = FullWorldThickets
+        .Where(t => t.X + t.VisualRadiusX < GameConstants.HalfWorldWidth)
+        .ToList();
+
+    public static IReadOnlyList<Thicket> ThicketsFor(float worldWidth) =>
+        worldWidth <= GameConstants.HalfWorldWidth ? HalfWorldThickets : FullWorldThickets;
+
+    private static IReadOnlyList<Thicket> BuildThickets()
+    {
+        const int target = 26;
+        var rng = new Random(20260726);
+        var made = new List<Thicket>();
+
+        for (var attempt = 0; made.Count < target && attempt < target * 200; attempt++)
+        {
+            var rx = 82f + (float)rng.NextDouble() * 78f;
+            var ry = 66f + (float)rng.NextDouble() * 64f;
+            var reach = MathF.Max(rx, ry);
+            var x = reach + 40f + (float)rng.NextDouble() * (GameConstants.WorldWidth - (reach + 40f) * 2f);
+            var y = reach + 40f + (float)rng.NextDouble() * (GameConstants.WorldHeight - (reach + 40f) * 2f);
+            var centre = new Vector2(x, y);
+
+            // Never inside a room: play spaces stay open and readable.
+            if (Rooms.Any(r =>
+                    x > r.X - reach - 30f && x < r.X + r.Width + reach + 30f &&
+                    y > r.Y - reach - 30f && y < r.Y + r.Height + reach + 30f))
+            {
+                continue;
+            }
+
+            // Clear of stonework, so a thicket never plugs a doorway or corridor.
+            if (FullWorldObstacles.Any(o =>
+                    Vector2.DistanceSquared(centre, o.ClosestPoint(centre)) < (reach + 34f) * (reach + 34f)))
+            {
+                continue;
+            }
+
+            // Clear of every starting room's centre.
+            if (SpawnPoints.Any(s => Vector2.DistanceSquared(centre, s) < 320f * 320f))
+            {
+                continue;
+            }
+
+            // Keep them apart so they read as separate copses, and so two cores
+            // can never merge into a barrier across the map.
+            if (made.Any(t =>
+                    Vector2.DistanceSquared(centre, t.Center) <
+                    MathF.Pow(reach + MathF.Max(t.VisualRadiusX, t.VisualRadiusY) + 55f, 2f)))
+            {
+                continue;
+            }
+
+            made.Add(new Thicket(x, y, MathF.Min(rx, ry) * ThicketCoreRatio, rx, ry, rng.Next()));
+        }
+
+        return made;
+    }
 
     public static float WorldWidthFor(int playerCount) =>
         playerCount <= GameConstants.HalfWorldMaxPlayers

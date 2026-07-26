@@ -278,6 +278,11 @@ public class GameManager
                 continue;
             }
 
+            if (IsInsideThicket(candidate, radius, Level.ThicketsFor(worldWidth)))
+            {
+                continue;
+            }
+
             if (IsNearAnyStartingRoom(candidate, worldWidth))
             {
                 continue;
@@ -291,6 +296,19 @@ public class GameManager
         return new Vector2(
             Math.Clamp(fallbackNear.X + RandomFloat(-60f, 60f), margin, worldWidth - margin),
             Math.Clamp(fallbackNear.Y + RandomFloat(-60f, 60f), margin, GameConstants.WorldHeight - margin));
+    }
+
+    private static bool IsInsideThicket(Vector2 point, float radius, IReadOnlyList<Thicket> thickets)
+    {
+        foreach (var thicket in thickets)
+        {
+            var reach = thicket.Radius + radius + 8f;
+            if (Vector2.DistanceSquared(point, thicket.Center) < reach * reach)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static bool OverlapsAnyObstacle(Vector2 point, float clearance, IReadOnlyList<Obstacle> obstacles)
@@ -341,6 +359,7 @@ public class GameManager
         var players = room.Players.ToList();
         var worldWidth = room.EffectiveWorldWidth;
         var obstacles = Level.ObstaclesFor(worldWidth);
+        var thickets = Level.ThicketsFor(worldWidth);
 
         foreach (var player in players)
         {
@@ -353,6 +372,7 @@ public class GameManager
             underling.Advance(deltaSeconds);
             BounceOffWalls(underling, worldWidth);
             ResolveObstacleCollisions(underling, obstacles, bounce: true);
+            ResolveThicketCollisions(underling, thickets, bounce: true);
         }
 
         foreach (var player in players)
@@ -360,10 +380,27 @@ public class GameManager
             player.Leader.Advance(deltaSeconds);
             BounceOffWalls(player.Leader, worldWidth);
             ResolveObstacleCollisions(player.Leader, obstacles, bounce: false);
+            ResolveThicketCollisions(player.Leader, thickets, bounce: false);
         }
 
         ResolveUnderlingCollisions(players);
         ResolveLeaderCollisions(players, room);
+
+        // Eating an underling shoves the leader 6px, and leader-vs-leader and
+        // underling-vs-underling separation move entities too. Those all happen
+        // after the terrain pass, so without re-resolving here an entity can end
+        // the tick sitting inside a wall or a thicket.
+        foreach (var underling in players.SelectMany(p => p.Underlings))
+        {
+            ResolveObstacleCollisions(underling, obstacles, bounce: false);
+            ResolveThicketCollisions(underling, thickets, bounce: false);
+        }
+        foreach (var player in players)
+        {
+            ResolveObstacleCollisions(player.Leader, obstacles, bounce: false);
+            ResolveThicketCollisions(player.Leader, thickets, bounce: false);
+        }
+
         CheckForWinner(room);
         room.Touch();
     }
@@ -420,6 +457,34 @@ public class GameManager
     // Circle-vs-axis-aligned-rectangle resolution against static obstacles.
     // Underlings bounce (reflect); leaders slide (inward velocity removed) so
     // walls feel like barriers to steer along rather than trampolines.
+    // Circle-vs-circle against the solid core of a thicket. Underlings bounce
+    // out of the undergrowth; leaders slide around it, same as walls.
+    private static void ResolveThicketCollisions(GameEntity entity, IReadOnlyList<Thicket> thickets, bool bounce)
+    {
+        foreach (var thicket in thickets)
+        {
+            var delta = entity.Position - thicket.Center;
+            var minDistance = thicket.Radius + entity.Radius;
+            var distanceSq = delta.LengthSquared;
+            if (distanceSq >= minDistance * minDistance)
+            {
+                continue;
+            }
+
+            var distance = (float)Math.Sqrt(distanceSq);
+            var normal = distance > 0.0001f ? delta / distance : new Vector2(1f, 0f);
+            entity.Position = thicket.Center + normal * minDistance;
+
+            var inward = entity.Velocity.X * normal.X + entity.Velocity.Y * normal.Y;
+            if (inward < 0f)
+            {
+                entity.Velocity = bounce
+                    ? entity.Velocity - normal * (2f * inward)
+                    : entity.Velocity - normal * inward;
+            }
+        }
+    }
+
     private static void ResolveObstacleCollisions(GameEntity entity, IReadOnlyList<Obstacle> obstacles, bool bounce)
     {
         var radius = entity.Radius;
@@ -589,6 +654,16 @@ public class GameManager
     private static readonly IReadOnlyCollection<RoomDto> HalfWorldRoomDtos = MapRooms(4);
     private static readonly IReadOnlyCollection<RoomDto> FullWorldRoomDtos = MapRooms(Level.Rooms.Count);
 
+    private static IReadOnlyCollection<ThicketDto> MapThickets(IReadOnlyList<Thicket> thickets) =>
+        thickets
+            .Select(t => new ThicketDto(t.X, t.Y, t.Radius, t.VisualRadiusX, t.VisualRadiusY, t.Seed))
+            .ToList();
+
+    private static readonly IReadOnlyCollection<ThicketDto> HalfWorldThicketDtos =
+        MapThickets(Level.HalfWorldThickets);
+    private static readonly IReadOnlyCollection<ThicketDto> FullWorldThicketDtos =
+        MapThickets(Level.FullWorldThickets);
+
     internal static GameStateDto BuildStateSnapshot(GameRoom room)
     {
         var serverTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -630,10 +705,11 @@ public class GameManager
         var half = worldWidth <= GameConstants.HalfWorldWidth;
         var obstacles = half ? HalfWorldObstacleDtos : FullWorldObstacleDtos;
         var rooms = half ? HalfWorldRoomDtos : FullWorldRoomDtos;
+        var thickets = half ? HalfWorldThicketDtos : FullWorldThicketDtos;
 
         return new GameStateDto(
             room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId,
-            room.HostId, obstacles, worldWidth, GameConstants.WorldHeight, rooms);
+            room.HostId, obstacles, worldWidth, GameConstants.WorldHeight, rooms, thickets);
     }
 
     private static string GenerateRoomId()
