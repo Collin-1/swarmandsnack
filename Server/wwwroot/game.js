@@ -60,6 +60,7 @@
   // with each server snapshot (half world with <=4 players, full with more).
   let worldWidth = canvasWidth;
   let worldHeight = canvasHeight;
+  let worldRooms = [];
   const camera = { x: 0, y: 0 };
 
   let connection;
@@ -291,6 +292,7 @@
 
       if (typeof payload.worldWidth === "number") worldWidth = payload.worldWidth;
       if (typeof payload.worldHeight === "number") worldHeight = payload.worldHeight;
+      if (Array.isArray(payload.rooms)) worldRooms = payload.rooms;
 
       // The snapshot roster is the authoritative "who is in this room" list, in
       // the lobby and mid-match alike, so voice peering follows it.
@@ -773,10 +775,13 @@
   // top-down camera rather than shown at their true depth.
   const CAP_BAND_PX = 14;
   const PROP_GRID = 4; // props.png is a 4x4 sheet
-  // Banners hang on walls in the reference art, so they are placed against wall
-  // faces instead of being scattered on open floor like the other props.
-  const PROP_BANNERS = [9, 10, 11];
-  const PROP_AREA_PER_ITEM = 92000; // world px^2 per scattered prop
+  // Sheet cells grouped by where they belong. Scattering everything uniformly
+  // reads as litter; in the reference art scenery crowds the stonework and open
+  // floor stays almost clear.
+  const PROP_BANNERS = [9, 10, 11]; // hung on wall faces
+  const PROP_FOLIAGE = [3, 4, 5]; // bush, fern, moss - piled against walls
+  const PROP_CLUTTER = [0, 1, 6, 7, 8, 12, 13, 14]; // rubble, crates, bones...
+  const PROP_ROCKS = [2, 15]; // the only things allowed in open floor
   // The hex grid belongs to the sci-fi look; it fights the stone dungeon one.
   const SHOW_HEX_OVERLAY = false;
 
@@ -1046,28 +1051,140 @@
     return false;
   }
 
+  /**
+   * Scenery is placed against the stonework rather than sprinkled over the
+   * floor: walked along every wall face, clustered at corners, and only a thin
+   * scatter of rocks left in the open. Uniform random placement was the reason
+   * the world read as litter on an empty field.
+   */
   function drawProps(sctx, obstacles) {
     const img = textureSources.props;
     const sprites = getPropSprites();
     if (!img || !sprites) return;
 
-    const size = (img.width / PROP_GRID) * TEXTURE_SCALE.props;
-    const half = size / 2;
-    const floorProps = sprites.filter((s) => !PROP_BANNERS.includes(s.index));
-    const target = Math.round((worldWidth * worldHeight) / PROP_AREA_PER_ITEM);
+    const cell = img.width / PROP_GRID;
     const random = seededRandom(1337 + Math.round(worldWidth));
+    const pick = (group) => sprites[group[(random() * group.length) | 0]];
 
-    let placed = 0;
-    for (let attempt = 0; placed < target && attempt < target * 40; attempt++) {
-      const x = half + 24 + random() * (worldWidth - size - 48);
-      const y = half + 24 + random() * (worldHeight - size - 48);
-      const sprite = floorProps[(random() * floorProps.length) | 0];
-      if (overlapsWall(x, y, half, obstacles)) continue;
+    const place = (sprite, cx, cy, size) => {
+      const half = size / 2;
+      if (cx < half || cy < half || cx > worldWidth - half || cy > worldHeight - half) return false;
+      if (overlapsWall(cx, cy, half * 0.55, obstacles)) return false;
       sctx.drawImage(
         img, sprite.sx, sprite.sy, sprite.size, sprite.size,
-        x - half, y - half, size, size,
+        cx - half, cy - half, size, size,
       );
-      placed++;
+      return true;
+    };
+
+    // --- moss and grass creeping out from the base of every wall ---
+    for (const o of obstacles) {
+      const step = 46;
+      for (let x = o.x; x < o.x + o.width; x += step) {
+        if (random() > 0.55) continue;
+        const w = 40 + random() * 46;
+        const grad = sctx.createRadialGradient(x, o.y + o.height, 0, x, o.y + o.height, w);
+        grad.addColorStop(0, "rgba(84, 104, 46, 0.5)");
+        grad.addColorStop(1, "rgba(84, 104, 46, 0)");
+        sctx.fillStyle = grad;
+        sctx.fillRect(x - w, o.y + o.height - w * 0.5, w * 2, w * 1.2);
+      }
+    }
+
+    // --- clutter and foliage banked along wall faces ---
+    for (const o of obstacles) {
+      const sides = [
+        { horiz: true, len: o.width, at: (t) => [o.x + t, o.y - 1], out: -1 },
+        { horiz: true, len: o.width, at: (t) => [o.x + t, o.y + o.height + 1], out: 1 },
+        { horiz: false, len: o.height, at: (t) => [o.x - 1, o.y + t], out: -1 },
+        { horiz: false, len: o.height, at: (t) => [o.x + o.width + 1, o.y + t], out: 1 },
+      ];
+      for (const side of sides) {
+        if (side.len < 70) continue;
+        for (let t = 30; t < side.len - 20; t += 74) {
+          if (random() > 0.5) continue;
+          const jitter = (random() - 0.5) * 34;
+          const [bx, by] = side.at(t + jitter);
+          // Small groups look deliberate where singletons look dropped.
+          const count = 1 + ((random() * 2.4) | 0);
+          for (let i = 0; i < count; i++) {
+            const foliage = random() < 0.55;
+            const sprite = pick(foliage ? PROP_FOLIAGE : PROP_CLUTTER);
+            const size = cell * (foliage ? 0.42 : 0.38) * (0.8 + random() * 0.5);
+            const away = size * (0.45 + random() * 0.3) + i * size * 0.5;
+            const slide = (random() - 0.5) * size * 1.4;
+            const cx = side.horiz ? bx + slide : bx + away * side.out;
+            const cy = side.horiz ? by + away * side.out : by + slide;
+            place(sprite, cx, cy, size);
+          }
+        }
+      }
+    }
+
+    // --- heavier clusters tucked into wall corners ---
+    for (const o of obstacles) {
+      if (o.width < 60 || o.height < 60) continue;
+      const corners = [
+        [o.x, o.y, -1, -1], [o.x + o.width, o.y, 1, -1],
+        [o.x, o.y + o.height, -1, 1], [o.x + o.width, o.y + o.height, 1, 1],
+      ];
+      for (const [cxr, cyr, dx, dy] of corners) {
+        if (random() > 0.42) continue;
+        const count = 2 + ((random() * 2.6) | 0);
+        for (let i = 0; i < count; i++) {
+          const sprite = pick(random() < 0.6 ? PROP_FOLIAGE : PROP_CLUTTER);
+          const size = cell * 0.4 * (0.75 + random() * 0.55);
+          place(
+            sprite,
+            cxr + dx * (size * (0.5 + random() * 0.9)),
+            cyr + dy * (size * (0.5 + random() * 0.9)),
+            size,
+          );
+        }
+      }
+    }
+
+    // --- a sparse handful of rocks so open floor isn't sterile ---
+    // Counts successful placements, not attempts: open ground should stay
+    // readable, so this is deliberately a scattering of a dozen or so.
+    const openRocks = Math.round((worldWidth * worldHeight) / 420000);
+    let rocks = 0;
+    for (let attempt = 0; rocks < openRocks && attempt < openRocks * 25; attempt++) {
+      const size = cell * 0.32 * (0.7 + random() * 0.5);
+      if (place(pick(PROP_ROCKS), random() * worldWidth, random() * worldHeight, size)) {
+        rocks++;
+      }
+    }
+  }
+
+  /**
+   * Gives each room its own identity: a wash of the colour of the player who
+   * spawns there plus a glowing inner edge, so the world reads as a set of
+   * places rather than one continuous floor.
+   */
+  function drawRoomFloors(sctx, rooms) {
+    if (!rooms || rooms.length === 0) return;
+    for (const room of rooms) {
+      const colour = paletteFor(room.colorKey).leader;
+      sctx.save();
+      sctx.globalAlpha = 0.09;
+      sctx.fillStyle = colour;
+      sctx.fillRect(room.x, room.y, room.width, room.height);
+      sctx.restore();
+
+      // Inner glow hugging the walls of the room.
+      sctx.save();
+      sctx.globalAlpha = 0.5;
+      sctx.strokeStyle = colour;
+      sctx.lineWidth = 3;
+      sctx.shadowColor = colour;
+      sctx.shadowBlur = 26;
+      const inset = 44; // matches GameConstants.WallThickness
+      sctx.strokeRect(
+        room.x + inset, room.y + inset,
+        room.width - inset * 2, room.height - inset * 2,
+      );
+      sctx.restore();
     }
   }
 
@@ -1134,7 +1251,7 @@
   }
 
   function renderScene() {
-    const signature = `${worldWidth}x${worldHeight}:${serverState.obstacles?.length ?? 0}`;
+    const signature = `${worldWidth}x${worldHeight}:${serverState.obstacles?.length ?? 0}:${worldRooms.length}`;
     if (signature !== staticLayerSignature) {
       staticLayerSignature = signature;
       renderStaticLayer();
@@ -1192,6 +1309,8 @@
 
     const obstacles = serverState.obstacles ?? [];
 
+    drawRoomFloors(sctx, worldRooms);
+
     // Scenery goes down before the stone, so anything close to a wall is
     // occluded by it rather than sitting on top.
     drawProps(sctx, obstacles);
@@ -1227,6 +1346,16 @@
     }
 
     drawWallBanners(sctx, obstacles);
+
+    // Darkened edges so the map falls away into shadow rather than ending flat.
+    const vig = sctx.createRadialGradient(
+      cx, cy, Math.min(worldWidth, worldHeight) * 0.34,
+      cx, cy, Math.max(worldWidth, worldHeight) * 0.72,
+    );
+    vig.addColorStop(0, "rgba(0, 0, 0, 0)");
+    vig.addColorStop(1, "rgba(0, 0, 0, 0.6)");
+    sctx.fillStyle = vig;
+    sctx.fillRect(0, 0, worldWidth, worldHeight);
 
     // World boundary so the edge of the map reads as a wall, not a void.
     sctx.strokeStyle = "rgba(0, 0, 0, 0.85)";

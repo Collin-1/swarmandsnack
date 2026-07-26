@@ -579,6 +579,16 @@ public class GameManager
     private static readonly IReadOnlyCollection<ObstacleDto> FullWorldObstacleDtos =
         Level.FullWorldObstacles.Select(o => new ObstacleDto(o.X, o.Y, o.Width, o.Height)).ToList();
 
+    // Room footprints are static too, so map both variants once. The colour key
+    // is the one the player spawning in that room is assigned.
+    private static IReadOnlyCollection<RoomDto> MapRooms(int count) =>
+        Level.Rooms.Take(count)
+            .Select((r, i) => new RoomDto(r.X, r.Y, r.Width, r.Height, ColorKeyForIndex(i)))
+            .ToList();
+
+    private static readonly IReadOnlyCollection<RoomDto> HalfWorldRoomDtos = MapRooms(4);
+    private static readonly IReadOnlyCollection<RoomDto> FullWorldRoomDtos = MapRooms(Level.Rooms.Count);
+
     internal static GameStateDto BuildStateSnapshot(GameRoom room)
     {
         var serverTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -617,13 +627,13 @@ public class GameManager
             .ToList();
 
         var worldWidth = room.EffectiveWorldWidth;
-        var obstacles = worldWidth <= GameConstants.HalfWorldWidth
-            ? HalfWorldObstacleDtos
-            : FullWorldObstacleDtos;
+        var half = worldWidth <= GameConstants.HalfWorldWidth;
+        var obstacles = half ? HalfWorldObstacleDtos : FullWorldObstacleDtos;
+        var rooms = half ? HalfWorldRoomDtos : FullWorldRoomDtos;
 
         return new GameStateDto(
             room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId,
-            room.HostId, obstacles, worldWidth, GameConstants.WorldHeight);
+            room.HostId, obstacles, worldWidth, GameConstants.WorldHeight, rooms);
     }
 
     private static string GenerateRoomId()
