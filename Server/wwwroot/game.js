@@ -61,6 +61,7 @@
   let worldWidth = canvasWidth;
   let worldHeight = canvasHeight;
   let worldRooms = [];
+  let worldThickets = [];
   const camera = { x: 0, y: 0 };
 
   let connection;
@@ -293,6 +294,7 @@
       if (typeof payload.worldWidth === "number") worldWidth = payload.worldWidth;
       if (typeof payload.worldHeight === "number") worldHeight = payload.worldHeight;
       if (Array.isArray(payload.rooms)) worldRooms = payload.rooms;
+      if (Array.isArray(payload.thickets)) worldThickets = payload.thickets;
 
       // The snapshot roster is the authoritative "who is in this room" list, in
       // the lobby and mid-match alike, so voice peering follows it.
@@ -657,6 +659,30 @@
     // Slide the optimistic local leader around obstacles so it matches the server
     // (which does the same circle-vs-rectangle resolution) and doesn't clip walls.
     collideLeaderWithObstacles(myLocalLeader);
+    collideLeaderWithThickets(myLocalLeader);
+  }
+
+  // Mirrors ResolveThicketCollisions on the server so the optimistic leader
+  // stops at the undergrowth instead of walking in and being pulled back out.
+  function collideLeaderWithThickets(leader) {
+    for (const thicket of worldThickets) {
+      const dx = leader.x - thicket.x;
+      const dy = leader.y - thicket.y;
+      const minDistance = thicket.radius + LEADER_RADIUS;
+      const distSq = dx * dx + dy * dy;
+      if (distSq >= minDistance * minDistance) continue;
+
+      const dist = Math.sqrt(distSq);
+      const nx = dist > 0.0001 ? dx / dist : 1;
+      const ny = dist > 0.0001 ? dy / dist : 0;
+      leader.x = thicket.x + nx * minDistance;
+      leader.y = thicket.y + ny * minDistance;
+      const inward = leader.vx * nx + leader.vy * ny;
+      if (inward < 0) {
+        leader.vx -= nx * inward;
+        leader.vy -= ny * inward;
+      }
+    }
   }
 
   function collideLeaderWithObstacles(leader) {
@@ -1162,19 +1188,17 @@
       sctx.restore();
     };
 
+    // Thickets are level geometry now: the server owns their positions and
+    // collides against their solid cores, so the client grows the canopy around
+    // what it is told rather than inventing its own.
     const canopy = [];
-    const thicketTarget = Math.round((worldWidth * worldHeight) / 210000);
-    let thickets = 0;
-    for (let attempt = 0; thickets < thicketTarget && attempt < thicketTarget * 30; attempt++) {
-      const cx0 = 90 + random() * (worldWidth - 180);
-      const cy0 = 90 + random() * (worldHeight - 180);
-      // Keep undergrowth out of the rooms so play spaces stay readable.
-      if (insideAnyRoom(cx0, cy0, roomRects, 40)) continue;
-      if (overlapsWall(cx0, cy0, 95, obstacles)) continue;
-      thickets++;
-
-      const rx = 72 + random() * 86;
-      const ry = 56 + random() * 74;
+    for (const thicket of worldThickets) {
+      const cx0 = thicket.x;
+      const cy0 = thicket.y;
+      const rx = thicket.radiusX;
+      const ry = thicket.radiusY;
+      // Seeded per thicket so the same bushes grow every rebuild.
+      const grow = seededRandom(thicket.seed >>> 0);
 
       // Shade on the ground so the mass sits in the world rather than floating.
       const shade = sctx.createRadialGradient(
@@ -1185,22 +1209,23 @@
       sctx.fillStyle = shade;
       sctx.fillRect(cx0 - rx * 1.5, cy0 - ry * 1.5, rx * 3, ry * 3);
 
-      const clumps = 18 + ((random() * 22) | 0);
+      const clumps = 26 + ((grow() * 22) | 0);
       for (let i = 0; i < clumps; i++) {
         // Averaging two samples biases toward the centre, so density falls off
-        // outward and the silhouette stays irregular.
-        const angle = random() * Math.PI * 2;
-        const spread = (random() + random()) / 2;
+        // outward and the silhouette stays irregular. Squaring it packs the
+        // solid core tightly enough that it reads as impassable.
+        const angle = grow() * Math.PI * 2;
+        const spread = Math.pow((grow() + grow()) / 2, 1.35);
         const px = cx0 + Math.cos(angle) * rx * spread;
         const py = cy0 + Math.sin(angle) * ry * spread;
         if (overlapsWall(px, py, 8, obstacles)) continue;
         canopy.push({
-          sprite: pick(PROP_FOLIAGE),
+          sprite: sprites[PROP_FOLIAGE[(grow() * PROP_FOLIAGE.length) | 0]],
           px,
           py,
           // Biggest at the core, smaller toward the edge.
-          size: cell * (0.30 + (1 - spread) * 0.26) * (0.85 + random() * 0.4),
-          rot: (random() - 0.5) * 0.55,
+          size: cell * (0.32 + (1 - spread) * 0.28) * (0.85 + grow() * 0.4),
+          rot: (grow() - 0.5) * 0.55,
         });
       }
     }
@@ -1337,7 +1362,7 @@
   }
 
   function renderScene() {
-    const signature = `${worldWidth}x${worldHeight}:${serverState.obstacles?.length ?? 0}:${worldRooms.length}`;
+    const signature = `${worldWidth}x${worldHeight}:${serverState.obstacles?.length ?? 0}:${worldRooms.length}:${worldThickets.length}`;
     if (signature !== staticLayerSignature) {
       staticLayerSignature = signature;
       renderStaticLayer();
