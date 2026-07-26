@@ -1057,7 +1057,7 @@
    * scatter of rocks left in the open. Uniform random placement was the reason
    * the world read as litter on an empty field.
    */
-  function drawProps(sctx, obstacles) {
+  function drawProps(sctx, obstacles, roomRects) {
     const img = textureSources.props;
     const sprites = getPropSprites();
     if (!img || !sprites) return;
@@ -1101,18 +1101,19 @@
       ];
       for (const side of sides) {
         if (side.len < 70) continue;
-        for (let t = 30; t < side.len - 20; t += 74) {
-          if (random() > 0.5) continue;
-          const jitter = (random() - 0.5) * 34;
+        for (let t = 26; t < side.len - 18; t += 58) {
+          if (random() > 0.56) continue;
+          const jitter = (random() - 0.5) * 30;
           const [bx, by] = side.at(t + jitter);
-          // Small groups look deliberate where singletons look dropped.
-          const count = 1 + ((random() * 2.4) | 0);
+          const foliage = random() < 0.6;
+          // Foliage goes down as an overlapping clump so it reads as a hedge
+          // banked against the wall; hard clutter stays a single object.
+          const count = foliage ? 3 + ((random() * 4) | 0) : 1;
           for (let i = 0; i < count; i++) {
-            const foliage = random() < 0.55;
             const sprite = pick(foliage ? PROP_FOLIAGE : PROP_CLUTTER);
-            const size = cell * (foliage ? 0.42 : 0.38) * (0.8 + random() * 0.5);
-            const away = size * (0.45 + random() * 0.3) + i * size * 0.5;
-            const slide = (random() - 0.5) * size * 1.4;
+            const size = cell * (foliage ? 0.4 : 0.38) * (0.75 + random() * 0.5);
+            const away = size * (0.42 + random() * 0.34);
+            const slide = (random() - 0.5) * size * (foliage ? 2.2 : 1.2);
             const cx = side.horiz ? bx + slide : bx + away * side.out;
             const cy = side.horiz ? by + away * side.out : by + slide;
             place(sprite, cx, cy, size);
@@ -1144,17 +1145,102 @@
       }
     }
 
-    // --- a sparse handful of rocks so open floor isn't sterile ---
-    // Counts successful placements, not attempts: open ground should stay
-    // readable, so this is deliberately a scattering of a dozen or so.
-    const openRocks = Math.round((worldWidth * worldHeight) / 420000);
-    let rocks = 0;
-    for (let attempt = 0; rocks < openRocks && attempt < openRocks * 25; attempt++) {
-      const size = cell * 0.32 * (0.7 + random() * 0.5);
-      if (place(pick(PROP_ROCKS), random() * worldWidth, random() * worldHeight, size)) {
-        rocks++;
+    // --- thickets: vegetation grown into masses, not spaced singles ---
+    //
+    // A bush every N pixels reads as a row of separate objects. Real
+    // undergrowth clumps: dense in the middle, ragged at the fringe, with the
+    // sprites overlapping into one canopy. Each thicket picks a centre in open
+    // ground and grows outward from it.
+    const drawRotated = (sprite, cx, cy, size, rot) => {
+      sctx.save();
+      sctx.translate(cx, cy);
+      if (rot) sctx.rotate(rot);
+      sctx.drawImage(
+        img, sprite.sx, sprite.sy, sprite.size, sprite.size,
+        -size / 2, -size / 2, size, size,
+      );
+      sctx.restore();
+    };
+
+    const canopy = [];
+    const thicketTarget = Math.round((worldWidth * worldHeight) / 210000);
+    let thickets = 0;
+    for (let attempt = 0; thickets < thicketTarget && attempt < thicketTarget * 30; attempt++) {
+      const cx0 = 90 + random() * (worldWidth - 180);
+      const cy0 = 90 + random() * (worldHeight - 180);
+      // Keep undergrowth out of the rooms so play spaces stay readable.
+      if (insideAnyRoom(cx0, cy0, roomRects, 40)) continue;
+      if (overlapsWall(cx0, cy0, 95, obstacles)) continue;
+      thickets++;
+
+      const rx = 72 + random() * 86;
+      const ry = 56 + random() * 74;
+
+      // Shade on the ground so the mass sits in the world rather than floating.
+      const shade = sctx.createRadialGradient(
+        cx0, cy0 + ry * 0.2, 0, cx0, cy0 + ry * 0.2, Math.max(rx, ry) * 1.15,
+      );
+      shade.addColorStop(0, "rgba(18, 26, 12, 0.45)");
+      shade.addColorStop(1, "rgba(18, 26, 12, 0)");
+      sctx.fillStyle = shade;
+      sctx.fillRect(cx0 - rx * 1.5, cy0 - ry * 1.5, rx * 3, ry * 3);
+
+      const clumps = 18 + ((random() * 22) | 0);
+      for (let i = 0; i < clumps; i++) {
+        // Averaging two samples biases toward the centre, so density falls off
+        // outward and the silhouette stays irregular.
+        const angle = random() * Math.PI * 2;
+        const spread = (random() + random()) / 2;
+        const px = cx0 + Math.cos(angle) * rx * spread;
+        const py = cy0 + Math.sin(angle) * ry * spread;
+        if (overlapsWall(px, py, 8, obstacles)) continue;
+        canopy.push({
+          sprite: pick(PROP_FOLIAGE),
+          px,
+          py,
+          // Biggest at the core, smaller toward the edge.
+          size: cell * (0.30 + (1 - spread) * 0.26) * (0.85 + random() * 0.4),
+          rot: (random() - 0.5) * 0.55,
+        });
       }
     }
+    // Back to front, so overlapping foliage layers instead of fighting.
+    canopy.sort((a, b) => a.py - b.py);
+    for (const leaf of canopy) drawRotated(leaf.sprite, leaf.px, leaf.py, leaf.size, leaf.rot);
+
+    // --- rocks in scree piles rather than lone pebbles ---
+    const screeTarget = Math.round((worldWidth * worldHeight) / 620000);
+    let scree = 0;
+    for (let attempt = 0; scree < screeTarget && attempt < screeTarget * 30; attempt++) {
+      const cx0 = 70 + random() * (worldWidth - 140);
+      const cy0 = 70 + random() * (worldHeight - 140);
+      if (insideAnyRoom(cx0, cy0, roomRects, 20)) continue;
+      if (overlapsWall(cx0, cy0, 70, obstacles)) continue;
+      scree++;
+      const stones = 3 + ((random() * 5) | 0);
+      for (let i = 0; i < stones; i++) {
+        const size = cell * 0.3 * (0.6 + random() * 0.7);
+        place(
+          pick(PROP_ROCKS),
+          cx0 + (random() - 0.5) * 96,
+          cy0 + (random() - 0.5) * 74,
+          size,
+        );
+      }
+    }
+  }
+
+  function insideAnyRoom(x, y, rooms, margin) {
+    if (!rooms) return false;
+    for (const r of rooms) {
+      if (
+        x > r.x - margin && x < r.x + r.width + margin &&
+        y > r.y - margin && y < r.y + r.height + margin
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -1313,7 +1399,7 @@
 
     // Scenery goes down before the stone, so anything close to a wall is
     // occluded by it rather than sitting on top.
-    drawProps(sctx, obstacles);
+    drawProps(sctx, obstacles, worldRooms);
 
     // Walls are drawn in three passes so the masonry pattern stays continuous
     // across adjoining blocks instead of restarting per rectangle.
