@@ -748,7 +748,372 @@
     };
   }
 
-  // The world background (grid + room walls) never changes during play, so it
+  // ---- World textures ----------------------------------------------------
+  //
+  // Floor and stone are painted with repeating textures. Everything here is
+  // baked into the cached static layer below, so texture detail costs nothing
+  // per frame no matter how elaborate it gets.
+  //
+  // The textures are generated procedurally as placeholders. To use real art,
+  // drop seamlessly tiling `floor.png` and `wall.png` into wwwroot/textures/
+  // and flip USE_IMAGE_TEXTURES to true -- nothing else needs to change.
+  const USE_IMAGE_TEXTURES = true;
+  const TEXTURE_PATHS = {
+    floor: "textures/floor.png",
+    wall: "textures/wall.png",
+    cap: "textures/cap.png",
+    props: "textures/props.png",
+  };
+  // Art is authored larger than it should appear in game; scaling the pattern
+  // keeps the source high-resolution while sizing features to the world. Walls
+  // are only 44px thick, so a 512px tile must shrink or a single stone course
+  // won't even fit across one.
+  const TEXTURE_SCALE = { floor: 0.75, wall: 0.5, cap: 0.5, props: 0.4 };
+  // Capstones are a lip along the top edge of a wall, foreshortened by the
+  // top-down camera rather than shown at their true depth.
+  const CAP_BAND_PX = 14;
+  const PROP_GRID = 4; // props.png is a 4x4 sheet
+  // Banners hang on walls in the reference art, so they are placed against wall
+  // faces instead of being scattered on open floor like the other props.
+  const PROP_BANNERS = [9, 10, 11];
+  const PROP_AREA_PER_ITEM = 92000; // world px^2 per scattered prop
+  // The hex grid belongs to the sci-fi look; it fights the stone dungeon one.
+  const SHOW_HEX_OVERLAY = false;
+
+  const textureSources = {};
+  let floorPattern = null;
+  let wallPattern = null;
+
+  // Returns the offsets a shape must also be drawn at so it wraps across the
+  // texture edges — without this the tiles show visible seams.
+  function wrapOffsets(x, y, radius, size) {
+    const xs = [0];
+    const ys = [0];
+    if (x - radius < 0) xs.push(size);
+    if (x + radius > size) xs.push(-size);
+    if (y - radius < 0) ys.push(size);
+    if (y + radius > size) ys.push(-size);
+    const out = [];
+    for (const ox of xs) for (const oy of ys) out.push([ox, oy]);
+    return out;
+  }
+
+  function buildFloorTexture(size) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const g = canvas.getContext("2d");
+
+    g.fillStyle = "#241f1a";
+    g.fillRect(0, 0, size, size);
+
+    // Broad light and dark patches: worn ground rather than flat colour.
+    for (let i = 0; i < 46; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const r = 40 + Math.random() * 95;
+      const light = Math.random() < 0.5;
+      for (const [ox, oy] of wrapOffsets(x, y, r, size)) {
+        const grad = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+        grad.addColorStop(0, light ? "rgba(78,68,54,0.40)" : "rgba(12,10,8,0.45)");
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        g.fillStyle = grad;
+        g.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
+      }
+    }
+
+    // Grit.
+    for (let i = 0; i < 2600; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const r = 0.6 + Math.random() * 1.8;
+      const shade = Math.random() < 0.5 ? 255 : 0;
+      g.fillStyle = `rgba(${shade},${shade},${shade},${0.03 + Math.random() * 0.05})`;
+      for (const [ox, oy] of wrapOffsets(x, y, r, size)) {
+        g.beginPath();
+        g.arc(x + ox, y + oy, r, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+
+    // A few cracks.
+    g.strokeStyle = "rgba(0,0,0,0.28)";
+    g.lineWidth = 1.4;
+    for (let i = 0; i < 16; i++) {
+      let x = Math.random() * size;
+      let y = Math.random() * size;
+      g.beginPath();
+      g.moveTo(x, y);
+      for (let seg = 0; seg < 4; seg++) {
+        x += (Math.random() - 0.5) * 60;
+        y += (Math.random() - 0.5) * 60;
+        g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+    return canvas;
+  }
+
+  function buildWallTexture(size) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const g = canvas.getContext("2d");
+
+    const blockW = size / 4;
+    const blockH = size / 8;
+
+    g.fillStyle = "#1b1c1a"; // mortar showing between blocks
+    g.fillRect(0, 0, size, size);
+
+    for (let row = 0; row < size / blockH; row++) {
+      const y = row * blockH;
+      const offset = row % 2 ? blockW / 2 : 0;
+      for (let col = -1; col <= size / blockW; col++) {
+        const x = col * blockW + offset;
+        const shade = 60 + Math.random() * 26;
+        const draws = x + blockW > size ? [0, -size] : x < 0 ? [0, size] : [0];
+
+        for (const ox of draws) {
+          const bx = x + ox + 1.5;
+          const by = y + 1.5;
+          const bw = blockW - 3;
+          const bh = blockH - 3;
+
+          g.fillStyle = `rgb(${shade},${shade - 3},${shade - 9})`;
+          g.fillRect(bx, by, bw, bh);
+
+          // Lit top edge and shaded bottom give the blocks relief.
+          g.fillStyle = "rgba(255,246,225,0.10)";
+          g.fillRect(bx, by, bw, 2.5);
+          g.fillStyle = "rgba(0,0,0,0.32)";
+          g.fillRect(bx, by + bh - 2.5, bw, 2.5);
+
+          // Pitting.
+          for (let i = 0; i < 12; i++) {
+            const px = bx + Math.random() * bw;
+            const py = by + Math.random() * bh;
+            g.fillStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.09})`;
+            g.beginPath();
+            g.arc(px, py, 0.7 + Math.random() * 1.7, 0, Math.PI * 2);
+            g.fill();
+          }
+
+          // Moss, as in the reference art.
+          if (Math.random() < 0.22) {
+            const mx = bx + Math.random() * bw;
+            const my = by + Math.random() * bh;
+            const grad = g.createRadialGradient(mx, my, 0, mx, my, blockH * 0.7);
+            grad.addColorStop(0, "rgba(96,124,54,0.34)");
+            grad.addColorStop(1, "rgba(96,124,54,0)");
+            g.fillStyle = grad;
+            g.fillRect(bx, by, bw, bh);
+          }
+        }
+      }
+    }
+    return canvas;
+  }
+
+  function ensureTextures() {
+    if (!textureSources.floor) textureSources.floor = buildFloorTexture(512);
+    if (!textureSources.wall) textureSources.wall = buildWallTexture(256);
+  }
+
+  function makePattern(ctx, source, scale) {
+    const pattern = ctx.createPattern(source, "repeat");
+    if (pattern && scale !== 1 && typeof pattern.setTransform === "function") {
+      // Only applies to image art; the procedural tiles are authored at size.
+      pattern.setTransform(new DOMMatrix([scale, 0, 0, scale, 0, 0]));
+    }
+    return pattern;
+  }
+
+  function scaleFor(key) {
+    // Procedural placeholders are drawn at their intended size already.
+    return textureSources[key] instanceof HTMLImageElement ? TEXTURE_SCALE[key] : 1;
+  }
+
+  function getFloorPattern(ctx) {
+    ensureTextures();
+    if (!floorPattern) floorPattern = makePattern(ctx, textureSources.floor, scaleFor("floor"));
+    return floorPattern;
+  }
+
+  function getWallPattern(ctx) {
+    ensureTextures();
+    if (!wallPattern) wallPattern = makePattern(ctx, textureSources.wall, scaleFor("wall"));
+    return wallPattern;
+  }
+
+  // ---- Wall capstones -----------------------------------------------------
+
+  let capPattern = null;
+
+  /**
+   * The capstone art does not wrap horizontally (its edge columns differ by far
+   * more than its interior does), so it is mirrored first: a tile followed by a
+   * flipped copy of itself always meets seamlessly at both joins, because each
+   * boundary puts identical columns next to each other. The result repeats over
+   * twice the width, which for a 14px lip is not readable as symmetry.
+   */
+  function getCapPattern(sctx) {
+    const src = textureSources.cap;
+    if (!src) return null;
+    if (capPattern) return capPattern;
+
+    const w = src.width;
+    const h = src.height;
+    const mirrored = document.createElement("canvas");
+    mirrored.width = w * 2;
+    mirrored.height = h;
+    const mctx = mirrored.getContext("2d");
+    mctx.drawImage(src, 0, 0);
+    mctx.save();
+    mctx.translate(w * 2, 0);
+    mctx.scale(-1, 1);
+    mctx.drawImage(src, 0, 0);
+    mctx.restore();
+
+    capPattern = sctx.createPattern(mirrored, "repeat");
+    if (capPattern && typeof capPattern.setTransform === "function") {
+      // Squashed vertically into the lip; horizontal scale matches the wall so
+      // capstones line up with the courses below them.
+      capPattern.setTransform(
+        new DOMMatrix([TEXTURE_SCALE.cap, 0, 0, CAP_BAND_PX / h, 0, 0]),
+      );
+    }
+    return capPattern;
+  }
+
+  function drawWallCaps(sctx, obstacles) {
+    const pattern = getCapPattern(sctx);
+    if (!pattern) return false;
+    sctx.save();
+    sctx.fillStyle = pattern;
+    for (const o of obstacles) {
+      // Anchored to the world origin, so caps stay continuous where walls meet.
+      sctx.fillRect(o.x, o.y, o.width, Math.min(CAP_BAND_PX, o.height));
+    }
+    sctx.restore();
+    return true;
+  }
+
+  // ---- Props -------------------------------------------------------------
+
+  let propSprites = null;
+
+  function getPropSprites() {
+    const img = textureSources.props;
+    if (!img) return null;
+    if (propSprites) return propSprites;
+    const cell = img.width / PROP_GRID;
+    propSprites = [];
+    for (let row = 0; row < PROP_GRID; row++) {
+      for (let col = 0; col < PROP_GRID; col++) {
+        propSprites.push({
+          index: row * PROP_GRID + col,
+          sx: col * cell,
+          sy: row * cell,
+          size: cell,
+        });
+      }
+    }
+    return propSprites;
+  }
+
+  // Props must land in the same spot every time the world layer is rebuilt,
+  // otherwise scenery would jump whenever the half/full world changes.
+  function seededRandom(seed) {
+    let state = seed >>> 0;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  }
+
+  function overlapsWall(x, y, half, obstacles) {
+    for (const o of obstacles) {
+      if (
+        x + half > o.x - 6 &&
+        x - half < o.x + o.width + 6 &&
+        y + half > o.y - 6 &&
+        y - half < o.y + o.height + 6
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function drawProps(sctx, obstacles) {
+    const img = textureSources.props;
+    const sprites = getPropSprites();
+    if (!img || !sprites) return;
+
+    const size = (img.width / PROP_GRID) * TEXTURE_SCALE.props;
+    const half = size / 2;
+    const floorProps = sprites.filter((s) => !PROP_BANNERS.includes(s.index));
+    const target = Math.round((worldWidth * worldHeight) / PROP_AREA_PER_ITEM);
+    const random = seededRandom(1337 + Math.round(worldWidth));
+
+    let placed = 0;
+    for (let attempt = 0; placed < target && attempt < target * 40; attempt++) {
+      const x = half + 24 + random() * (worldWidth - size - 48);
+      const y = half + 24 + random() * (worldHeight - size - 48);
+      const sprite = floorProps[(random() * floorProps.length) | 0];
+      if (overlapsWall(x, y, half, obstacles)) continue;
+      sctx.drawImage(
+        img, sprite.sx, sprite.sy, sprite.size, sprite.size,
+        x - half, y - half, size, size,
+      );
+      placed++;
+    }
+  }
+
+  function drawWallBanners(sctx, obstacles) {
+    const img = textureSources.props;
+    const sprites = getPropSprites();
+    if (!img || !sprites) return;
+
+    const size = (img.width / PROP_GRID) * 0.5;
+    const banners = PROP_BANNERS.map((i) => sprites[i]).filter(Boolean);
+    if (banners.length === 0) return;
+    const random = seededRandom(99 + Math.round(worldWidth));
+
+    for (const o of obstacles) {
+      // Only long walls, and only some of them, so banners stay an accent.
+      if (o.width < size * 1.6 || o.height < 24) continue;
+      if (random() > 0.3) continue;
+      const sprite = banners[(random() * banners.length) | 0];
+      const cx = o.x + o.width * (0.25 + random() * 0.5);
+      // Hangs from the wall face, pole sitting on the stone.
+      sctx.drawImage(
+        img, sprite.sx, sprite.sy, sprite.size, sprite.size,
+        cx - size / 2, o.y + o.height - size * 0.3, size, size,
+      );
+    }
+  }
+
+  // Optional real art. Falls back silently to the procedural textures.
+  function loadImageTextures() {
+    if (!USE_IMAGE_TEXTURES) return;
+    for (const key of Object.keys(TEXTURE_PATHS)) {
+      const img = new Image();
+      img.onload = () => {
+        textureSources[key] = img;
+        floorPattern = null;
+        wallPattern = null;
+        capPattern = null;
+        propSprites = null;
+        staticLayerSignature = null; // force the world to repaint with it
+      };
+      img.onerror = () => {};
+      img.src = TEXTURE_PATHS[key];
+    }
+  }
+
+  // The world background (floor + room walls) never changes during play, so it
   // is rasterised once into a world-sized offscreen canvas and the camera's
   // window into it is blitted each frame. Re-rendered only when the world
   // size or obstacle set changes (first snapshot, or half <-> full world).
@@ -801,46 +1166,73 @@
     const sctx = staticLayer.getContext("2d");
     sctx.save();
 
-    // Dark Arcade Background
-    sctx.fillStyle = "#0b1220";
+    // Ground
+    sctx.fillStyle = "#241f1a";
     sctx.fillRect(0, 0, staticLayer.width, staticLayer.height);
+    sctx.fillStyle = getFloorPattern(sctx);
+    sctx.fillRect(0, 0, worldWidth, worldHeight);
 
-    // Soft glow through the middle of the world so the floor reads as lit
-    // rather than flat black at this scale.
+    // Warm pool of light through the middle, darkening toward the edges, so a
+    // world this size doesn't read as one evenly-lit sheet.
     const cx = worldWidth / 2;
     const cy = worldHeight / 2;
-    const glow = sctx.createRadialGradient(
+    const lit = sctx.createRadialGradient(
       cx, cy, 0,
       cx, cy, Math.max(worldWidth, worldHeight) * 0.72,
     );
-    glow.addColorStop(0, "rgba(30, 70, 120, 0.38)");
-    glow.addColorStop(0.55, "rgba(18, 40, 76, 0.18)");
-    glow.addColorStop(1, "rgba(8, 14, 26, 0)");
-    sctx.fillStyle = glow;
+    lit.addColorStop(0, "rgba(150, 120, 70, 0.16)");
+    lit.addColorStop(0.55, "rgba(60, 48, 30, 0.08)");
+    lit.addColorStop(1, "rgba(0, 0, 0, 0.42)");
+    sctx.fillStyle = lit;
     sctx.fillRect(0, 0, worldWidth, worldHeight);
 
-    drawHexFloor(sctx);
-
-    // World boundary so the edge of the map reads as a wall, not a void.
-    sctx.strokeStyle = "rgba(56, 189, 248, 0.5)";
-    sctx.lineWidth = 4;
-    sctx.strokeRect(2, 2, worldWidth - 4, worldHeight - 4);
+    if (SHOW_HEX_OVERLAY) {
+      drawHexFloor(sctx);
+    }
 
     const obstacles = serverState.obstacles ?? [];
-    for (const o of obstacles) {
-      sctx.fillStyle = "#1e293b"; // Slate 800
-      sctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
-      sctx.lineWidth = 2;
-      sctx.beginPath();
-      sctx.rect(o.x, o.y, o.width, o.height);
-      sctx.fill();
-      sctx.stroke();
 
-      // Inner accent line for a bit of arcade depth.
-      sctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
-      sctx.lineWidth = 1;
-      sctx.strokeRect(o.x + 3, o.y + 3, o.width - 6, o.height - 6);
+    // Scenery goes down before the stone, so anything close to a wall is
+    // occluded by it rather than sitting on top.
+    drawProps(sctx, obstacles);
+
+    // Walls are drawn in three passes so the masonry pattern stays continuous
+    // across adjoining blocks instead of restarting per rectangle.
+    sctx.save();
+    sctx.shadowColor = "rgba(0, 0, 0, 0.72)";
+    sctx.shadowBlur = 20;
+    sctx.shadowOffsetX = 5;
+    sctx.shadowOffsetY = 8;
+    sctx.fillStyle = "#000";
+    for (const o of obstacles) sctx.fillRect(o.x, o.y, o.width, o.height);
+    sctx.restore();
+
+    sctx.fillStyle = getWallPattern(sctx);
+    for (const o of obstacles) sctx.fillRect(o.x, o.y, o.width, o.height);
+
+    // Capstone lip, or a plain lit edge when there is no cap art.
+    const capped = drawWallCaps(sctx, obstacles);
+
+    for (const o of obstacles) {
+      if (!capped) {
+        sctx.fillStyle = "rgba(255, 244, 214, 0.13)";
+        sctx.fillRect(o.x, o.y, o.width, 3);
+      }
+      // Shaded base reads as height from a top-down camera.
+      sctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+      sctx.fillRect(o.x, o.y + o.height - 4, o.width, 4);
+      sctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+      sctx.lineWidth = 2;
+      sctx.strokeRect(o.x + 1, o.y + 1, o.width - 2, o.height - 2);
     }
+
+    drawWallBanners(sctx, obstacles);
+
+    // World boundary so the edge of the map reads as a wall, not a void.
+    sctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    sctx.lineWidth = 8;
+    sctx.strokeRect(4, 4, worldWidth - 8, worldHeight - 8);
+
     sctx.restore();
   }
 
@@ -1441,6 +1833,7 @@
   window.addEventListener("keyup", handleKeyUp);
   window.addEventListener("blur", handleWindowBlur);
 
+  loadImageTextures();
   requestAnimationFrame(draw);
   startConnection().catch((err) => {
     console.error(err);
