@@ -42,6 +42,11 @@
   let levelTimer = null;
 
   let audioSink = null;
+  // True when the browser refused to start playback because the page has no
+  // user activation yet. Joining by invite link is exactly this case: the join
+  // is a programmatic click, so a player can be arriving into a call before
+  // they have ever interacted with the page.
+  let audioBlocked = false;
 
   function log(...args) {
     if (window.VOICE_DEBUG) console.log("[voice]", ...args);
@@ -66,6 +71,38 @@
     // Browsers start the context suspended until a user gesture.
     if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
     return audioCtx;
+  }
+
+  /** Starts playback, remembering if the browser refuses. */
+  function playRemoteAudio(el) {
+    const attempt = el.play();
+    if (attempt && typeof attempt.catch === "function") {
+      attempt.catch(() => {
+        audioBlocked = true;
+      });
+    }
+  }
+
+  /**
+   * Retries anything the autoplay policy previously refused. Safe to call on
+   * every user gesture: it returns immediately once nothing is blocked.
+   */
+  function resumeAudioPlayback() {
+    const contextSuspended = audioCtx && audioCtx.state === "suspended";
+    if (!audioBlocked && !contextSuspended) {
+      return;
+    }
+
+    if (contextSuspended) {
+      audioCtx.resume().catch(() => {});
+    }
+
+    audioBlocked = false;
+    for (const peer of peers.values()) {
+      if (peer.audioEl && peer.audioEl.paused) {
+        playRemoteAudio(peer.audioEl);
+      }
+    }
   }
 
   function attachAnalyser(stream) {
@@ -178,10 +215,7 @@
         peer.audioEl = el;
       }
       peer.audioEl.srcObject = stream;
-      peer.audioEl.play().catch(() => {
-        // Autoplay can be blocked until the page sees a gesture; the user has
-        // to click Create/Join to get here, so this is rare and self-healing.
-      });
+      playRemoteAudio(peer.audioEl);
       peer.analyser = attachAnalyser(stream);
       peer.buffer = peer.analyser ? new Uint8Array(peer.analyser.fftSize) : null;
       startLevelPolling();
@@ -355,6 +389,7 @@
 
   async function toggleMic() {
     getAudioContext(); // this call is inside a click handler: unlocks playback
+    resumeAudioPlayback(); // and retries anything refused before that gesture
 
     if (!micTrack) {
       const ok = await requestMic();
@@ -422,6 +457,13 @@
     connection.on("PlayerLeft", (payload) => {
       if (payload && payload.playerId) removePeer(payload.playerId);
     });
+
+    // Any genuine interaction gives the page user activation, which is the only
+    // thing that lets refused playback start. Captured so it runs even if the
+    // click is handled elsewhere, and cheap: it exits immediately once nothing
+    // is blocked.
+    document.addEventListener("pointerdown", resumeAudioPlayback, true);
+    document.addEventListener("keydown", resumeAudioPlayback, true);
   }
 
   function setSelfId(myId) {
@@ -461,6 +503,9 @@
       return !!peer && peer.speakingUntil > now && remoteMic.get(playerId) === true;
     },
     isMicLive: () => micOn,
+    /** True while the browser is refusing to play incoming voice. */
+    isAudioBlocked: () => audioBlocked,
+    resumeAudioPlayback,
     /** Per-peer connection state and audio flow, for diagnosing call quality. */
     async getInboundStats() {
       const out = [];

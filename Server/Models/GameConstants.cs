@@ -10,7 +10,10 @@ public static class GameConstants
     public const float WorldHeight = 1920f;
     public const float HalfWorldWidth = 1440f;
     public const int HalfWorldMaxPlayers = 4;
-    public const float WallThickness = 20f;
+    // Thick enough for stonework to read as blocks rather than a smudge. Walls
+    // are drawn inside the room footprint, so this shrinks room interiors but
+    // never narrows the corridors between rooms.
+    public const float WallThickness = 44f;
     public const float DoorWidth = 120f;
     public const float LeaderSpeed = 160f; // units per second
     public const float LeaderRadius = 18f;

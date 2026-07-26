@@ -55,7 +55,7 @@ public static class Level
     public static readonly IReadOnlyList<Vector2> SpawnPoints =
         Rooms.Select(r => r.Center).ToList();
 
-    private const float T = 24f; // default wall thickness for free-standing shapes
+    private const float T = 34f; // default wall thickness for free-standing shapes
 
     /// <summary>Free-standing walls in the left half (always present).</summary>
     private static readonly IReadOnlyList<Obstacle> LeftShapes = BuildLeftShapes().ToList();
@@ -80,11 +80,11 @@ public static class Level
     private static IEnumerable<Obstacle> BuildLeftShapes()
     {
         foreach (var o in LShape(700f, 180f, 260f, 220f, T)) yield return o;
-        foreach (var o in Staircase(1060f, 160f, 3, 120f, 110f, 22f)) yield return o;
+        foreach (var o in Staircase(1060f, 160f, 3, 120f, 110f, 30f)) yield return o;
         foreach (var o in Cross(580f, 1180f, 210f, 200f, T)) yield return o;
         foreach (var o in TShape(1000f, 1460f, 300f, 190f, T)) yield return o;
-        yield return new Obstacle(1350f, 520f, 22f, 560f);   // long vertical line
-        yield return new Obstacle(180f, 1330f, 22f, 300f);   // short vertical line
+        yield return new Obstacle(1350f, 520f, 30f, 560f);   // long vertical line
+        yield return new Obstacle(180f, 1330f, 30f, 300f);   // short vertical line
         yield return new Obstacle(560f, 560f, 64f, 64f);     // pillar
         yield return new Obstacle(1310f, 1240f, 70f, 70f);   // pillar
     }
@@ -92,12 +92,12 @@ public static class Level
     private static IEnumerable<Obstacle> BuildRightShapes()
     {
         foreach (var o in UShape(1990f, 200f, 180f, 270f, T)) yield return o;
-        foreach (var o in Staircase(1500f, 780f, 4, 120f, 110f, 22f)) yield return o;
-        foreach (var o in Cross(2040f, 1150f, 220f, 215f, 26f)) yield return o;
+        foreach (var o in Staircase(1500f, 780f, 4, 120f, 110f, 30f)) yield return o;
+        foreach (var o in Cross(2040f, 1150f, 220f, 215f, 34f)) yield return o;
         foreach (var o in LShape(2500f, 1450f, 260f, 220f, T, flipX: true)) yield return o;
         foreach (var o in TShape(2250f, 600f, 300f, 140f, T)) yield return o;
-        yield return new Obstacle(1450f, 1250f, 300f, 20f);  // long horizontal line
-        yield return new Obstacle(2820f, 700f, 20f, 420f);   // wall-hugging line
+        yield return new Obstacle(1450f, 1250f, 300f, 30f);  // long horizontal line
+        yield return new Obstacle(2820f, 700f, 30f, 420f);   // wall-hugging line
         yield return new Obstacle(2650f, 1760f, 70f, 70f);   // pillar
         yield return new Obstacle(1470f, 1500f, 64f, 64f);   // pillar
     }
