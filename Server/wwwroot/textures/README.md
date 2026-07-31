@@ -1,49 +1,55 @@
-# World textures
+# World textures — orbital dock
 
-The world floor and walls are painted with repeating textures baked into the
+The world surface is painted with these repeating textures, baked once into the
 cached background layer, so texture detail costs nothing per frame.
 
-`USE_IMAGE_TEXTURES` in `game.js` selects between the art in this folder and the
-procedural fallbacks (`buildFloorTexture` / `buildWallTexture`). It is currently
-**on**, using the four files below.
+`USE_IMAGE_TEXTURES` in `game.js` selects between this art and the procedural
+fallbacks. It is currently **on**.
 
-| File | Shipped | Requirements |
+| File | Shipped | Role |
 | --- | --- | --- |
-| `floor.png` | 512×512 | **Seamlessly tiling.** Top-down dirt/flagstone, flat even lighting — no baked shadows or highlights, they will repeat visibly. |
-| `wall.png` | 512×512 | **Seamlessly tiling.** Top-down mossy stone blocks. Keep it darker than the floor so walls read as solid. |
-| `cap.png` | 512×128 | Capstone strip drawn as a lip along wall tops. Should tile left–right; see the note below. |
-| `props.png` | 512×512 | 4×4 sheet of 128px cells, transparent background. Cells 9–11 are treated as banners and hung on walls; the rest are scattered on open floor. |
+| `floor.png` | 512×512 | Hangar decking under the whole world |
+| `wall.png` | 512×512 | Bulkhead top surface, filling every wall rect |
+| `cap.png` | 512×128 | Lit capping rail, drawn as a 14px lip along wall tops |
+| `props.png` | 512×512 | 4×4 sheet of 128px cells — dock equipment |
+| `../backdrop.png` | 2880×1920 | Space behind the dock, set as the page background |
 
-Sizes here are larger than they appear in game — `TEXTURE_SCALE` in `game.js`
-shrinks each pattern so features land at the right world size (walls are only
-44px thick, so a 512px tile must scale down or one stone course won't fit
-across a wall).
+`TEXTURE_SCALE` in `game.js` shrinks each pattern so features land at the right
+world size — a 512px wall tile has to scale down or a single plating segment
+won't fit across a 44px-thick barrier.
 
-## The cap tile does not wrap, and is mirrored to compensate
+## Two of these do not tile, and are mirrored to compensate
 
-`cap.png` as exported has a real horizontal seam: its edge columns differ by
-about 21× its interior variation, which shows up as a line every tile. Rather
-than depend on the art being fixed, `getCapPattern` mirrors the tile — a tile
-followed by a flipped copy always meets seamlessly, because each join places
-identical columns side by side. Measured after mirroring: 0× (perfect).
+Measured wrap difference against interior variation (1.0 is a perfect wrap,
+past ~3 is a visible line):
 
-If the generator is fixed at source, the mirror can be dropped. The likely bug
-is that capstone *tone* is indexed with `Math.floor(px / blockWidth)` while the
-joint positions are jittered, so at the wrap two differently-toned capstones
-meet with no mortar line between them. Deriving the tone from the same jittered
-block index used for the joints should fix it.
+| | Horizontal | Vertical |
+| --- | --- | --- |
+| `floor.png` | 1.1 — fine | **12.0 — seam** |
+| `wall.png` | **7.6 — seam** | **11.3 — seam** |
+| `cap.png` | 2.8 — marginal | not required to tile |
+| `props.png` | perfect | perfect |
 
-Notes for whoever makes the art:
+`TEXTURE_MIRROR` therefore mirrors the floor vertically and the wall on both
+axes; `getCapPattern` mirrors the cap horizontally. A tile followed by a flipped
+copy always meets seamlessly, because each join places identical rows or columns
+side by side. The cost is mirror symmetry every two tiles, which on subtle
+plating is invisible next to a bright seam line every 512px.
 
-- Tiling is the hard requirement. A beautiful non-tiling texture will show a
-  grid of seams across the whole world.
-- Scale: walls are 44px thick, so roughly 5–6 stone courses should fit across
-  a 256px tile for the blocks to read at gameplay size.
-- Keep both textures low-contrast and mid-to-dark. Player colours (cyan, rose,
-  amber, violet, lime, orange, sky, fuchsia) must stay readable on top.
-- Relief is added in code (drop shadow, lit top lip, shaded base), so the art
-  does not need baked-in edge lighting.
+If the art is ever regenerated so it wraps properly, drop the corresponding
+entry from `TEXTURE_MIRROR` and the tile will be used as-is.
 
-Optional extras that would need a small amount of new drawing code — say the
-word and they can be wired up the same way: prop sprite sheet (rubble,
-foliage, banners, crates) and floor decals.
+## Prop sheet cell map
+
+The renderer treats specific cells specially, so the order matters:
+
+| Cells | Contents | Used as |
+| --- | --- | --- |
+| 3, 4, 5 | crystal formation, plasma bloom, conduit tangle | **Thickets only.** Dozens overlap into one mass, and thickets are solid — so a glowing mass always means impassable |
+| 9, 10, 11 | holo-banners (magenta, cyan, amber) | Hung on barrier faces |
+| 2, 15 | hull debris, shrapnel | Grouped into scatter piles |
+| the rest | crates, cargo pods, drums, plating, data spire, sensor dish, power core | Single objects stood against walls and in corners |
+
+Growth is deliberately kept off wall faces. Mixing it with walk-through scenery
+would break the "glowing means solid" rule, and its cyan competes with the cyan
+player token.
