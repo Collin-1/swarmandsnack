@@ -27,7 +27,11 @@
       body {
         margin: 0;
         font-family: "Rajdhani", sans-serif;
-        background: url("swarm-and-snack-bgd.png") no-repeat center center fixed;
+        /* Deliberately not background-attachment: fixed. A cover-scaled
+           backdrop with fixed attachment makes the compositor re-rasterise the
+           whole image every frame the canvas updates, which measured 48fps
+           against 59fps without it. */
+        background: #05070c url("backdrop.png") no-repeat center center;
         background-size: cover;
         color: var(--text);
         min-height: 100vh;

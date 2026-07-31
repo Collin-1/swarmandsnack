@@ -797,6 +797,12 @@
   // are only 44px thick, so a 512px tile must shrink or a single stone course
   // won't even fit across one.
   const TEXTURE_SCALE = { floor: 0.75, wall: 0.5, cap: 0.5, props: 0.4 };
+  // Axes each texture has to be mirrored on to wrap. See mirroredTile for the
+  // measurements behind these.
+  const TEXTURE_MIRROR = {
+    floor: { x: false, y: true },
+    wall: { x: true, y: true },
+  };
   // Capstones are a lip along the top edge of a wall, foreshortened by the
   // top-down camera rather than shown at their true depth.
   const CAP_BAND_PX = 14;
@@ -805,7 +811,9 @@
   // reads as litter; in the reference art scenery crowds the stonework and open
   // floor stays almost clear.
   const PROP_BANNERS = [9, 10, 11]; // hung on wall faces
-  const PROP_FOLIAGE = [3, 4, 5]; // bush, fern, moss - piled against walls
+  // Crystal formation, plasma bloom, conduit tangle. Used only for thickets,
+  // which are solid, so a glowing mass reliably means "impassable".
+  const PROP_FOLIAGE = [3, 4, 5];
   const PROP_CLUTTER = [0, 1, 6, 7, 8, 12, 13, 14]; // rubble, crates, bones...
   const PROP_ROCKS = [2, 15]; // the only things allowed in open floor
   // The hex grid belongs to the sci-fi look; it fights the stone dungeon one.
@@ -829,119 +837,132 @@
     return out;
   }
 
+  // Deck plating: regular panels with recessed seams and dim power lines
+  // routed through them. Panels sit on an exact grid so the tile wraps.
   function buildFloorTexture(size) {
     const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
     const g = canvas.getContext("2d");
 
-    g.fillStyle = "#241f1a";
+    const panel = size / 4;
+    g.fillStyle = "#0a0f18";
     g.fillRect(0, 0, size, size);
 
-    // Broad light and dark patches: worn ground rather than flat colour.
-    for (let i = 0; i < 46; i++) {
-      const x = Math.random() * size;
-      const y = Math.random() * size;
-      const r = 40 + Math.random() * 95;
-      const light = Math.random() < 0.5;
-      for (const [ox, oy] of wrapOffsets(x, y, r, size)) {
-        const grad = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
-        grad.addColorStop(0, light ? "rgba(78,68,54,0.40)" : "rgba(12,10,8,0.45)");
-        grad.addColorStop(1, "rgba(0,0,0,0)");
-        g.fillStyle = grad;
-        g.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
+    for (let row = 0; row < 4; row++) {
+      for (let col = 0; col < 4; col++) {
+        // Deterministic per-panel tone so the variation tiles with the grid.
+        const n = ((row * 7 + col * 13) % 5) / 5;
+        const shade = 22 + n * 10;
+        g.fillStyle = `rgb(${shade - 4},${shade + 2},${shade + 12})`;
+        g.fillRect(col * panel + 1.5, row * panel + 1.5, panel - 3, panel - 3);
+
+        // Lit top-left inner edge, shaded bottom-right: shallow relief only.
+        g.fillStyle = "rgba(150, 200, 255, 0.05)";
+        g.fillRect(col * panel + 1.5, row * panel + 1.5, panel - 3, 1.5);
+        g.fillStyle = "rgba(0, 0, 0, 0.35)";
+        g.fillRect(col * panel + 1.5, (row + 1) * panel - 3, panel - 3, 1.5);
+
+        // Fasteners at the panel corners.
+        g.fillStyle = "rgba(120, 160, 200, 0.16)";
+        for (const [fx, fy] of [[9, 9], [panel - 9, 9], [9, panel - 9], [panel - 9, panel - 9]]) {
+          g.beginPath();
+          g.arc(col * panel + fx, row * panel + fy, 1.8, 0, Math.PI * 2);
+          g.fill();
+        }
       }
     }
 
-    // Grit.
-    for (let i = 0; i < 2600; i++) {
-      const x = Math.random() * size;
-      const y = Math.random() * size;
-      const r = 0.6 + Math.random() * 1.8;
-      const shade = Math.random() < 0.5 ? 255 : 0;
-      g.fillStyle = `rgba(${shade},${shade},${shade},${0.03 + Math.random() * 0.05})`;
-      for (const [ox, oy] of wrapOffsets(x, y, r, size)) {
+    // Power conduits inset into some seams. Kept dim and spread evenly: a
+    // bright run would repeat like wallpaper once the tile is laid out.
+    g.strokeStyle = "rgba(56, 189, 248, 0.16)";
+    g.lineWidth = 2;
+    for (let i = 1; i < 4; i++) {
+      if (i % 2 === 0) {
         g.beginPath();
-        g.arc(x + ox, y + oy, r, 0, Math.PI * 2);
-        g.fill();
+        g.moveTo(0, i * panel);
+        g.lineTo(size, i * panel);
+        g.stroke();
+      } else {
+        g.beginPath();
+        g.moveTo(i * panel, 0);
+        g.lineTo(i * panel, size);
+        g.stroke();
       }
     }
 
-    // A few cracks.
-    g.strokeStyle = "rgba(0,0,0,0.28)";
-    g.lineWidth = 1.4;
-    for (let i = 0; i < 16; i++) {
-      let x = Math.random() * size;
-      let y = Math.random() * size;
-      g.beginPath();
-      g.moveTo(x, y);
-      for (let seg = 0; seg < 4; seg++) {
-        x += (Math.random() - 0.5) * 60;
-        y += (Math.random() - 0.5) * 60;
-        g.lineTo(x, y);
-      }
-      g.stroke();
+    // Fine brushed grain.
+    for (let i = 0; i < 2400; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const light = Math.random() < 0.5;
+      g.fillStyle = light
+        ? `rgba(150,190,230,${0.02 + Math.random() * 0.03})`
+        : `rgba(0,0,0,${0.03 + Math.random() * 0.05})`;
+      g.fillRect(x, y, 1 + Math.random() * 2, 1);
     }
     return canvas;
   }
 
+  // Bulkhead seen from above: armoured segments divided by recessed channels
+  // with power routed along them.
   function buildWallTexture(size) {
     const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
     const g = canvas.getContext("2d");
 
-    const blockW = size / 4;
-    const blockH = size / 8;
+    const rows = 6;
+    const cols = 4;
+    const segH = size / rows;
+    const segW = size / cols;
 
-    g.fillStyle = "#1b1c1a"; // mortar showing between blocks
+    g.fillStyle = "#080d14"; // channel colour showing between segments
     g.fillRect(0, 0, size, size);
 
-    for (let row = 0; row < size / blockH; row++) {
-      const y = row * blockH;
-      const offset = row % 2 ? blockW / 2 : 0;
-      for (let col = -1; col <= size / blockW; col++) {
-        const x = col * blockW + offset;
-        const shade = 60 + Math.random() * 26;
-        const draws = x + blockW > size ? [0, -size] : x < 0 ? [0, size] : [0];
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const n = ((row * 5 + col * 11) % 4) / 4;
+        const shade = 26 + n * 9;
+        const x = col * segW + 2.5;
+        const y = row * segH + 2.5;
+        const w = segW - 5;
+        const h = segH - 5;
 
-        for (const ox of draws) {
-          const bx = x + ox + 1.5;
-          const by = y + 1.5;
-          const bw = blockW - 3;
-          const bh = blockH - 3;
+        g.fillStyle = `rgb(${shade - 6},${shade},${shade + 10})`;
+        g.fillRect(x, y, w, h);
 
-          g.fillStyle = `rgb(${shade},${shade - 3},${shade - 9})`;
-          g.fillRect(bx, by, bw, bh);
+        g.fillStyle = "rgba(150, 200, 255, 0.07)";
+        g.fillRect(x, y, w, 2);
+        g.fillStyle = "rgba(0, 0, 0, 0.4)";
+        g.fillRect(x, y + h - 2, w, 2);
 
-          // Lit top edge and shaded bottom give the blocks relief.
-          g.fillStyle = "rgba(255,246,225,0.10)";
-          g.fillRect(bx, by, bw, 2.5);
-          g.fillStyle = "rgba(0,0,0,0.32)";
-          g.fillRect(bx, by + bh - 2.5, bw, 2.5);
-
-          // Pitting.
-          for (let i = 0; i < 12; i++) {
-            const px = bx + Math.random() * bw;
-            const py = by + Math.random() * bh;
-            g.fillStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.09})`;
-            g.beginPath();
-            g.arc(px, py, 0.7 + Math.random() * 1.7, 0, Math.PI * 2);
-            g.fill();
-          }
-
-          // Moss, as in the reference art.
-          if (Math.random() < 0.22) {
-            const mx = bx + Math.random() * bw;
-            const my = by + Math.random() * bh;
-            const grad = g.createRadialGradient(mx, my, 0, mx, my, blockH * 0.7);
-            grad.addColorStop(0, "rgba(96,124,54,0.34)");
-            grad.addColorStop(1, "rgba(96,124,54,0)");
-            g.fillStyle = grad;
-            g.fillRect(bx, by, bw, bh);
+        // Vent slots on some segments.
+        if ((row + col) % 3 === 0) {
+          g.fillStyle = "rgba(0, 0, 0, 0.35)";
+          for (let v = 0; v < 3; v++) {
+            g.fillRect(x + w * 0.25, y + h * 0.3 + v * 5, w * 0.5, 2);
           }
         }
+
+        // Fasteners.
+        g.fillStyle = "rgba(130, 170, 210, 0.18)";
+        for (const [fx, fy] of [[6, 6], [w - 6, 6], [6, h - 6], [w - 6, h - 6]]) {
+          g.beginPath();
+          g.arc(x + fx, y + fy, 1.6, 0, Math.PI * 2);
+          g.fill();
+        }
       }
+    }
+
+    // Energy running along the horizontal channels.
+    g.strokeStyle = "rgba(56, 189, 248, 0.3)";
+    g.lineWidth = 1.5;
+    for (let row = 1; row < rows; row++) {
+      g.beginPath();
+      g.moveTo(0, row * segH);
+      g.lineTo(size, row * segH);
+      g.stroke();
     }
     return canvas;
   }
@@ -951,8 +972,48 @@
     if (!textureSources.wall) textureSources.wall = buildWallTexture(256);
   }
 
-  function makePattern(ctx, source, scale) {
-    const pattern = ctx.createPattern(source, "repeat");
+  /**
+   * Builds a tile that wraps on the requested axes by mirroring: a tile
+   * followed by a flipped copy of itself always meets seamlessly, because each
+   * boundary places identical rows or columns side by side.
+   *
+   * Measured on the shipped art, wrap difference against interior variation
+   * (1.0 is a perfect wrap, anything past ~3 is a visible line):
+   *   floor.png  horizontal 1.1 (fine)   vertical 12.0 (seam)
+   *   wall.png   horizontal 7.6 (seam)   vertical 11.3 (seam)
+   * So the floor only needs mirroring vertically, while the wall needs both.
+   * The cost is mirror symmetry every two tiles, which on subtle plating reads
+   * as nothing at all, unlike a bright line every 512px.
+   */
+  function mirroredTile(source, mirrorX, mirrorY) {
+    if (!mirrorX && !mirrorY) return source;
+    const w = source.width;
+    const h = source.height;
+    const canvas = document.createElement("canvas");
+    canvas.width = mirrorX ? w * 2 : w;
+    canvas.height = mirrorY ? h * 2 : h;
+    const ctx = canvas.getContext("2d");
+
+    const stamp = (flipX, flipY) => {
+      ctx.save();
+      ctx.translate(flipX ? w * 2 : 0, flipY ? h * 2 : 0);
+      ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+      ctx.drawImage(source, 0, 0);
+      ctx.restore();
+    };
+
+    stamp(false, false);
+    if (mirrorX) stamp(true, false);
+    if (mirrorY) stamp(false, true);
+    if (mirrorX && mirrorY) stamp(true, true);
+    return canvas;
+  }
+
+  function makePattern(ctx, source, scale, mirror) {
+    const tile = mirror
+      ? mirroredTile(source, !!mirror.x, !!mirror.y)
+      : source;
+    const pattern = ctx.createPattern(tile, "repeat");
     if (pattern && scale !== 1 && typeof pattern.setTransform === "function") {
       // Only applies to image art; the procedural tiles are authored at size.
       pattern.setTransform(new DOMMatrix([scale, 0, 0, scale, 0, 0]));
@@ -965,15 +1026,24 @@
     return textureSources[key] instanceof HTMLImageElement ? TEXTURE_SCALE[key] : 1;
   }
 
+  // Only the image art needs mirroring; the procedural fallbacks already wrap.
+  function mirrorFor(key) {
+    return textureSources[key] instanceof HTMLImageElement ? TEXTURE_MIRROR[key] : null;
+  }
+
   function getFloorPattern(ctx) {
     ensureTextures();
-    if (!floorPattern) floorPattern = makePattern(ctx, textureSources.floor, scaleFor("floor"));
+    if (!floorPattern) {
+      floorPattern = makePattern(ctx, textureSources.floor, scaleFor("floor"), mirrorFor("floor"));
+    }
     return floorPattern;
   }
 
   function getWallPattern(ctx) {
     ensureTextures();
-    if (!wallPattern) wallPattern = makePattern(ctx, textureSources.wall, scaleFor("wall"));
+    if (!wallPattern) {
+      wallPattern = makePattern(ctx, textureSources.wall, scaleFor("wall"), mirrorFor("wall"));
+    }
     return wallPattern;
   }
 
@@ -1110,8 +1180,8 @@
         if (random() > 0.55) continue;
         const w = 40 + random() * 46;
         const grad = sctx.createRadialGradient(x, o.y + o.height, 0, x, o.y + o.height, w);
-        grad.addColorStop(0, "rgba(84, 104, 46, 0.5)");
-        grad.addColorStop(1, "rgba(84, 104, 46, 0)");
+        grad.addColorStop(0, "rgba(56, 189, 248, 0.28)");
+        grad.addColorStop(1, "rgba(56, 189, 248, 0)");
         sctx.fillStyle = grad;
         sctx.fillRect(x - w, o.y + o.height - w * 0.5, w * 2, w * 1.2);
       }
@@ -1131,15 +1201,16 @@
           if (random() > 0.56) continue;
           const jitter = (random() - 0.5) * 30;
           const [bx, by] = side.at(t + jitter);
-          const foliage = random() < 0.6;
-          // Foliage goes down as an overlapping clump so it reads as a hedge
-          // banked against the wall; hard clutter stays a single object.
-          const count = foliage ? 3 + ((random() * 4) | 0) : 1;
+          // Only hard equipment is stood against walls. The glowing growth is
+          // reserved for thickets, which are solid: keeping the two apart means
+          // a glowing mass always means "you cannot walk through this", and
+          // keeps bright cyan away from the cyan player token.
+          const count = 1;
           for (let i = 0; i < count; i++) {
-            const sprite = pick(foliage ? PROP_FOLIAGE : PROP_CLUTTER);
-            const size = cell * (foliage ? 0.4 : 0.38) * (0.75 + random() * 0.5);
+            const sprite = pick(PROP_CLUTTER);
+            const size = cell * 0.38 * (0.75 + random() * 0.5);
             const away = size * (0.42 + random() * 0.34);
-            const slide = (random() - 0.5) * size * (foliage ? 2.2 : 1.2);
+            const slide = (random() - 0.5) * size * 1.2;
             const cx = side.horiz ? bx + slide : bx + away * side.out;
             const cy = side.horiz ? by + away * side.out : by + slide;
             place(sprite, cx, cy, size);
@@ -1159,7 +1230,7 @@
         if (random() > 0.42) continue;
         const count = 2 + ((random() * 2.6) | 0);
         for (let i = 0; i < count; i++) {
-          const sprite = pick(random() < 0.6 ? PROP_FOLIAGE : PROP_CLUTTER);
+          const sprite = pick(PROP_CLUTTER);
           const size = cell * 0.4 * (0.75 + random() * 0.55);
           place(
             sprite,
@@ -1408,9 +1479,9 @@
       cx, cy, 0,
       cx, cy, Math.max(worldWidth, worldHeight) * 0.72,
     );
-    lit.addColorStop(0, "rgba(150, 120, 70, 0.16)");
-    lit.addColorStop(0.55, "rgba(60, 48, 30, 0.08)");
-    lit.addColorStop(1, "rgba(0, 0, 0, 0.42)");
+    lit.addColorStop(0, "rgba(70, 130, 180, 0.15)");
+    lit.addColorStop(0.55, "rgba(30, 60, 96, 0.08)");
+    lit.addColorStop(1, "rgba(0, 0, 0, 0.45)");
     sctx.fillStyle = lit;
     sctx.fillRect(0, 0, worldWidth, worldHeight);
 
