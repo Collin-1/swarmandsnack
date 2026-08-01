@@ -1607,48 +1607,246 @@
     sctx.fillRect(0, 0, worldWidth, worldHeight);
   }
 
+  // ---- Creatures ---------------------------------------------------------
+  //
+  // At 36px for a leader and 24px for an underling, illustrated detail is
+  // invisible but motion reads instantly, so the liveliness is all animation:
+  // eyes that lead the direction of travel, stretch along velocity, an idle
+  // bob, a trail behind leaders, and a reaction when something gets eaten.
+  //
+  // Everything here is derived from vx/vy already in the snapshot, so none of
+  // it costs the server anything.
+
+  /** id -> { lookX, lookY, phase, pop, trail } */
+  const creatureAnim = new Map();
+  const eatBursts = [];
+  let animPruneCounter = 0;
+
+  // id -> { x, y, colour, frame }. Entries are mutated in place and stamped with
+  // the frame that last saw them, rather than rebuilding a map of fresh objects
+  // every frame — at eight players that would be forty allocations per frame.
+  const underlingTrack = new Map();
+  let creatureFrame = 0;
+
+  // Stable per-entity phase so creatures don't all breathe in unison.
+  function phaseFor(id) {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (Math.imul(h, 31) + id.charCodeAt(i)) | 0;
+    return ((h >>> 0) % 1000) / 1000 * Math.PI * 2;
+  }
+
+  function animFor(id) {
+    let a = creatureAnim.get(id);
+    if (!a) {
+      a = { lookX: 0, lookY: 1, phase: phaseFor(id), pop: 0, trail: [] };
+      creatureAnim.set(id, a);
+    }
+    return a;
+  }
+
+  function drawCreature(entity, anim, colors, isLeader, time, seconds) {
+    const speed = Math.hypot(entity.vx || 0, entity.vy || 0);
+
+    // Ease the gaze toward travel so eyes swing rather than snap, and hold the
+    // last direction when stopped instead of resetting.
+    if (speed > 4) {
+      const nx = entity.vx / speed;
+      const ny = entity.vy / speed;
+      const ease = Math.min(1, seconds * 9);
+      anim.lookX += (nx - anim.lookX) * ease;
+      anim.lookY += (ny - anim.lookY) * ease;
+    }
+    const lookLen = Math.hypot(anim.lookX, anim.lookY) || 1;
+    const lx = anim.lookX / lookLen;
+    const ly = anim.lookY / lookLen;
+
+    // Idle bob when still, faster pulse when moving.
+    const bob = Math.sin(time / (speed > 4 ? 120 : 420) + anim.phase) * (isLeader ? 1.6 : 0.9);
+    const radius = entity.radius + bob + anim.pop;
+
+    // Stretch along the direction of travel, squashing across it. Volume is
+    // roughly preserved so it reads as a body flexing, not just scaling.
+    const stretch = Math.min(0.22, (speed / LEADER_SPEED) * 0.22);
+    const rx = radius * (1 + stretch);
+    const ry = radius * (1 - stretch * 0.75);
+    const angle = Math.atan2(ly, lx);
+
+    ctx.save();
+    ctx.translate(entity.x, entity.y);
+    ctx.rotate(angle);
+
+    // Emissive halo: cheap flat circle rather than a per-entity gradient, which
+    // would mean rebuilding 48 gradients every frame.
+    ctx.globalAlpha = isLeader ? 0.3 : 0.22;
+    ctx.fillStyle = colors.leader;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx * 1.55, ry * 1.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = isLeader ? colors.leader : colors.underling;
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.lineWidth = isLeader ? 4 : 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // Eyes are drawn unrotated so they stay upright, offset toward the way the
+    // creature is heading.
+    const eyeR = isLeader ? radius / 3 : radius / 2.1;
+    const ex = entity.x + lx * radius * 0.3;
+    const ey = entity.y + ly * radius * 0.3;
+
+    ctx.save();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(ex, ey, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#0b1020";
+    ctx.beginPath();
+    ctx.arc(ex + lx * eyeR * 0.34, ey + ly * eyeR * 0.34, eyeR * 0.46, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function drawEntities(state) {
     if (!state || !state.players) {
       return;
     }
 
-    // Bouncy wobble animation
     const time = performance.now();
+    const seconds = Math.min(0.05, (time - lastCreatureFrame) / 1000);
+    lastCreatureFrame = time;
+
+    const seen = new Set();
+    creatureFrame++;
+
+    // Trails go down first so bodies sit on top of them.
+    for (const player of state.players) {
+      const colors = paletteFor(player.teamColor);
+      const anim = animFor(player.leader.id);
+      const speed = Math.hypot(player.leader.vx || 0, player.leader.vy || 0);
+      if (speed > 10) {
+        anim.trail.push({ x: player.leader.x, y: player.leader.y });
+        if (anim.trail.length > 7) anim.trail.shift();
+      } else if (anim.trail.length) {
+        anim.trail.shift();
+      }
+      ctx.save();
+      for (let i = 0; i < anim.trail.length; i++) {
+        const t = (i + 1) / (anim.trail.length + 1);
+        ctx.globalAlpha = t * 0.24;
+        ctx.fillStyle = colors.leader;
+        ctx.beginPath();
+        ctx.arc(anim.trail[i].x, anim.trail[i].y, player.leader.radius * t * 0.85, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
 
     for (const player of state.players) {
-      // Per-player palette (keyed by the server-assigned colour key).
       const colors = paletteFor(player.teamColor);
-      const baseColor = colors.leader;
-      const underlingColor = colors.underling;
 
       for (const underling of player.underlings) {
-        // Underlings
-        drawCircle(
-          underling.x,
-          underling.y,
-          underling.radius,
-          underlingColor,
-          false, // No wobble for small ones
-        );
+        seen.add(underling.id);
+        trackUnderling(underling, colors.underling);
+        const anim = animFor(underling.id);
+        anim.pop *= 0.86;
+        drawCreature(underling, anim, colors, false, time, seconds);
       }
 
-      // Leaders get a wobble effect
-      const wobble = Math.sin(time / 150) * 2;
-
-      drawCircle(
-        player.leader.x,
-        player.leader.y,
-        player.leader.radius + wobble,
-        baseColor,
-        true,
-      );
-      drawEye(
-        player.leader.x,
-        player.leader.y,
-        player.leader.radius + wobble,
-        "#ffffff",
-      );
+      seen.add(player.leader.id);
+      const anim = animFor(player.leader.id);
+      anim.pop *= 0.82;
+      drawCreature(player.leader, anim, colors, true, time, seconds);
     }
+
+    detectEatBursts(state);
+    drawEatBursts(seconds);
+
+    // Keep the animation table from growing across matches.
+    if (++animPruneCounter > 120) {
+      animPruneCounter = 0;
+      for (const id of creatureAnim.keys()) {
+        if (!seen.has(id)) creatureAnim.delete(id);
+      }
+    }
+  }
+
+  let lastCreatureFrame = performance.now();
+
+  function trackUnderling(underling, colour) {
+    let entry = underlingTrack.get(underling.id);
+    if (!entry) {
+      entry = { x: 0, y: 0, colour, frame: 0 };
+      underlingTrack.set(underling.id, entry);
+    }
+    entry.x = underling.x;
+    entry.y = underling.y;
+    entry.colour = colour;
+    entry.frame = creatureFrame;
+  }
+
+  // An underling that was on screen last frame and is gone now was eaten.
+  // Burst where it died and pop whichever leader is closest, which is the one
+  // that took it.
+  //
+  // Two things that are not an eat can also empty ids out of the roster: the
+  // lobby-to-battle handover replaces every underling at once, and a player
+  // leaving takes their whole swarm. Both were measured firing a screenful of
+  // bursts. Eating is inherently one-at-a-time and happens in contact, so a
+  // vanish only counts when the frame is otherwise calm and a leader is on top
+  // of it.
+  const MAX_EATS_PER_FRAME = 2;
+  const EAT_REACH = 90;
+
+  function detectEatBursts(state) {
+    let gone = 0;
+    for (const entry of underlingTrack.values()) {
+      if (entry.frame !== creatureFrame) gone++;
+    }
+    if (!gone) return;
+
+    // Too many at once to be eating — forget them without any fanfare.
+    const bulk = gone > MAX_EATS_PER_FRAME;
+
+    for (const [id, entry] of underlingTrack) {
+      if (entry.frame === creatureFrame) continue;
+      underlingTrack.delete(id);
+      if (bulk) continue;
+
+      let best = null;
+      let bestDist = EAT_REACH * EAT_REACH;
+      for (const player of state.players) {
+        const dx = player.leader.x - entry.x;
+        const dy = player.leader.y - entry.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; best = player.leader.id; }
+      }
+      if (!best) continue;
+      eatBursts.push({ x: entry.x, y: entry.y, colour: entry.colour, age: 0 });
+      animFor(best).pop = 5;
+    }
+  }
+
+  function drawEatBursts(seconds) {
+    ctx.save();
+    for (let i = eatBursts.length - 1; i >= 0; i--) {
+      const burst = eatBursts[i];
+      burst.age += seconds;
+      const t = burst.age / 0.42;
+      if (t >= 1) { eatBursts.splice(i, 1); continue; }
+      ctx.globalAlpha = (1 - t) * 0.8;
+      ctx.strokeStyle = burst.colour;
+      ctx.lineWidth = 3 * (1 - t) + 1;
+      ctx.beginPath();
+      ctx.arc(burst.x, burst.y, 8 + t * 34, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   let lastScoreboardHtml = null;
@@ -1776,38 +1974,6 @@
     }
   }
 
-  function drawCircle(x, y, radius, color, isLeader = false) {
-    ctx.save();
-    ctx.beginPath();
-
-    // Flat color with thick outline (Sticker style)
-    ctx.fillStyle = color;
-    ctx.strokeStyle = "rgba(0,0,0,0.3)";
-    ctx.lineWidth = isLeader ? 4 : 2;
-
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  function drawEye(x, y, radius, fillStyle) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.fillStyle = fillStyle;
-    // Bigger, cuter eyes
-    ctx.arc(x, y - radius / 3, radius / 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Pupil
-    ctx.beginPath();
-    ctx.fillStyle = "#000";
-    ctx.arc(x, y - radius / 3, radius / 8, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-  }
 
   function lighten(hexColor, amount) {
     const color = hexColor.replace("#", "");
