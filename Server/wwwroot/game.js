@@ -52,6 +52,9 @@
   const micIconEl = document.getElementById("micIcon");
   const micLabelEl = document.getElementById("micLabel");
   const voiceStatusEl = document.getElementById("voiceStatus");
+  const audioBtn = document.getElementById("audioBtn");
+  const audioIconEl = document.getElementById("audioIcon");
+  const audioVolumeEl = document.getElementById("audioVolume");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -377,6 +380,8 @@
       // Ensure state reflects game over so movement stops (truthy sentinel for a draw).
       serverState.winnerId = payload.winnerId || "__draw__";
 
+      GameAudio.playTrack("victory");
+
       const winnerColor = winner ? paletteFor(winner.teamColor).leader : "#ffffff";
       const titleText = winner ? "VICTORY!" : isDraw ? "DRAW" : "GAME OVER";
 
@@ -611,6 +616,14 @@
 
     lobbyCount = state.players?.length ?? lobbyCount;
     const inLobby = !state.isActive && !state.winnerId;
+
+    // Music follows the room state. The victory sting is started by the
+    // GameOver handler instead, so don't tread on it while a winner stands.
+    if (state.isActive) {
+      GameAudio.playTrack("match");
+    } else if (inLobby) {
+      GameAudio.playTrack("lobby");
+    }
 
     // Host-only Start Match button, visible only while sitting in the lobby.
     // Runs every snapshot; only touch the DOM when something actually changes.
@@ -1778,6 +1791,11 @@
 
   let lastCreatureFrame = performance.now();
 
+  function onScreen(x, y) {
+    return x >= camera.x && x <= camera.x + canvasWidth
+      && y >= camera.y && y <= camera.y + canvasHeight;
+  }
+
   function trackUnderling(underling, colour) {
     let entry = underlingTrack.get(underling.id);
     if (!entry) {
@@ -1829,6 +1847,11 @@
       if (!best) continue;
       eatBursts.push({ x: entry.x, y: entry.y, colour: entry.colour, age: 0 });
       animFor(best).pop = 5;
+
+      // Only sound off for kills you can actually see. Eight players eating
+      // across a 2880x1920 map would otherwise be a constant chatter of chomps
+      // for things happening off screen.
+      if (onScreen(entry.x, entry.y)) GameAudio.eat();
     }
   }
 
@@ -2305,6 +2328,31 @@
       }
     });
   }
+
+  function updateAudioButton() {
+    if (!audioBtn) return;
+    const muted = GameAudio.isMuted();
+    const icon = muted ? "🔇" : "🔊";
+    if (audioIconEl && audioIconEl.textContent !== icon) audioIconEl.textContent = icon;
+    audioBtn.classList.toggle("muted", muted);
+    audioBtn.title = muted ? "Unmute game audio" : "Mute game audio";
+  }
+
+  if (audioBtn) {
+    audioBtn.addEventListener("click", () => {
+      GameAudio.toggleMute();
+      updateAudioButton();
+    });
+  }
+  if (audioVolumeEl) {
+    audioVolumeEl.value = String(Math.round(GameAudio.getVolume() * 100));
+    audioVolumeEl.addEventListener("input", () => {
+      GameAudio.setVolume(Number(audioVolumeEl.value) / 100);
+      updateAudioButton();
+    });
+  }
+  GameAudio.onChange(updateAudioButton);
+  updateAudioButton();
 
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keyup", handleKeyUp);

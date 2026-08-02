@@ -585,6 +585,19 @@
         background: #4ade80;
         box-shadow: 0 0 12px rgba(74, 222, 128, 0.6);
       }
+      button.audio-btn {
+        padding: 0.5rem 0.7rem;
+      }
+      button.audio-btn.muted {
+        border-color: #475569;
+        color: #94a3b8;
+        background: transparent;
+      }
+      .audio-volume {
+        width: 70px;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
       button.mic-btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
@@ -684,6 +697,13 @@
             <button id="micBtn" class="mic-btn" type="button">
               <span id="micIcon">🎤</span><span id="micLabel">Enable Mic</span>
             </button>
+            <button id="audioBtn" class="mic-btn audio-btn" type="button"
+                    title="Mute or unmute game audio">
+              <span id="audioIcon">🔊</span>
+            </button>
+            <input id="audioVolume" class="audio-volume" type="range"
+                   min="0" max="100" step="1" value="80"
+                   aria-label="Game volume" title="Game volume" />
           </div>
         </div>
         <div id="scoreboard" class="scoreboard-hud"></div>
@@ -739,6 +759,7 @@
       </div>
     </div>
     <script src="voice.js"></script>
+    <script src="audio.js"></script>
     <script src="game.js"></script>
   </body>
 </html>
