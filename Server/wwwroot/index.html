@@ -14,6 +14,48 @@
       crossorigin="anonymous"
       referrerpolicy="no-referrer"
     ></script>
+    <script>
+      // The desk layout is a fixed size — a 320px control panel beside a 960x640
+      // canvas — which needs 1378x869 to sit side by side. Laptops below that
+      // used to hit `flex-wrap` on <main> and stack the panel above the game,
+      // which put the canvas ~850px below the fold at 1366x768: you had to
+      // scroll to play. Scaling the whole block instead keeps the arrangement
+      // identical, just smaller.
+      //
+      // This runs in <head> and writes to documentElement, which already exists,
+      // so the scale is set before first paint and nothing visibly reflows.
+      (function () {
+        var DESIGN_W = 1378;
+        var DESIGN_H = 869;
+        // style.css turns <main> into a row at 960px. Below that the layout is
+        // genuinely stacked, so these side-by-side constants don't describe it
+        // and scaling against them would shrink it for no reason.
+        var ROW_LAYOUT_MIN_WIDTH = 960;
+
+        // A few pixels of headroom. Without it an exact fit still produces a
+        // scrollbar, because zoom lays out on subpixel boundaries that round up.
+        var SAFETY_PX = 10;
+
+        function fitUiScale() {
+          var root = document.documentElement;
+          if (window.innerWidth < ROW_LAYOUT_MIN_WIDTH) {
+            root.style.setProperty("--ui-scale", "1");
+            return;
+          }
+          // Never scale up: on big screens the design stays at its intended size.
+          var scale = Math.min(
+            1,
+            (window.innerWidth - SAFETY_PX) / DESIGN_W,
+            (window.innerHeight - SAFETY_PX) / DESIGN_H
+          );
+          // Floor, never round — rounding up reintroduces the overflow.
+          root.style.setProperty("--ui-scale", String(Math.floor(scale * 1000) / 1000));
+        }
+
+        fitUiScale();
+        window.addEventListener("resize", fitUiScale);
+      })();
+    </script>
     <style>
       :root {
         --hud-bg: rgba(11, 19, 32, 0.95);
@@ -42,6 +84,10 @@
       }
 
       main {
+        /* Set by the scaling script above. zoom rather than transform: scale
+           because zoom shrinks the layout box too, so a scaled-down page leaves
+           no phantom whitespace and needs no scrollbar. */
+        zoom: var(--ui-scale, 1);
         display: flex;
         gap: 2rem;
         align-items: center;
