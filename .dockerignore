@@ -1,0 +1,24 @@
+# Keeps the build context small and the layer cache stable. Without this,
+# `COPY . .` pulls roughly 78MB of git history and design assets into the image
+# build, and any screenshot or note added to design-handoff invalidates every
+# layer after the copy.
+
+.git
+.github
+.gitignore
+.dockerignore
+Dockerfile
+.claude
+
+# Design masters: mockups, screenshots, prompt docs, and the full-quality audio
+# the web-encoded tracks were made from. The audio the game actually serves
+# lives in Server/wwwroot/audio and ships with the publish output.
+design-handoff/
+
+# Host build output. The image builds its own inside the SDK stage.
+**/bin/
+**/obj/
+
+# Repo documentation, not runtime files.
+README.md
+ARCHITECTURE.md
