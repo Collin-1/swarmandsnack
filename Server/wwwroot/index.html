@@ -73,7 +73,11 @@
            backdrop with fixed attachment makes the compositor re-rasterise the
            whole image every frame the canvas updates, which measured 48fps
            against 59fps without it. */
-        background: #05070c url("backdrop.png") no-repeat center center;
+        /* JPEG, not PNG: this is an opaque photographic starfield with no
+           transparency, and background-size: cover rescales it anyway. As a
+           2880x1920 PNG it was 5.1MB; at native 1536x1024 JPEG it is 0.12MB
+           and indistinguishable behind the dock. */
+        background: #05070c url("backdrop.jpg") no-repeat center center;
         background-size: cover;
         color: var(--text);
         min-height: 100vh;

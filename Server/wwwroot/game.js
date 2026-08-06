@@ -812,9 +812,19 @@
   const TEXTURE_SCALE = { floor: 0.75, wall: 0.5, cap: 0.5, props: 0.4 };
   // Axes each texture has to be mirrored on to wrap. See mirroredTile for the
   // measurements behind these.
+  //
+  // Measured on the current art (wrap-edge delta over interior baseline; 1.0 is
+  // a perfect wrap, past ~3 is a visible line):
+  //
+  //           horizontal   vertical
+  //   floor        0.93       1.52     tiles honestly on both axes
+  //   wall         1.57       4.42     wraps across, seams top to bottom
+  //   cap          1.65        n/a     only ever tiled horizontally
+  //
+  // So the floor needs no mirroring at all now, which is what removes the
+  // symmetry that used to repeat across the deck every two tiles.
   const TEXTURE_MIRROR = {
-    floor: { x: false, y: true },
-    wall: { x: true, y: true },
+    wall: { x: false, y: true },
   };
   // Capstones are a lip along the top edge of a wall, foreshortened by the
   // top-down camera rather than shown at their true depth.
@@ -1065,11 +1075,16 @@
   let capPattern = null;
 
   /**
-   * The capstone art does not wrap horizontally (its edge columns differ by far
-   * more than its interior does), so it is mirrored first: a tile followed by a
-   * flipped copy of itself always meets seamlessly at both joins, because each
-   * boundary puts identical columns next to each other. The result repeats over
-   * twice the width, which for a 14px lip is not readable as symmetry.
+   * The cap is mirrored before use: a tile followed by a flipped copy of itself
+   * always meets seamlessly at both joins, because each boundary puts identical
+   * columns side by side. The result repeats over twice the width, which for a
+   * 14px lip is not readable as symmetry.
+   *
+   * The current art measures 1.65 across the horizontal wrap, which is nearly
+   * clean enough to use as-is. It stays mirrored anyway because the cap's
+   * brightest feature is a continuous lit strip running its whole length, and a
+   * break in that is far more noticeable than symmetry in the dark ribs around
+   * it. The mirror costs nothing here; a visible join would cost a lot.
    */
   function getCapPattern(sctx) {
     const src = textureSources.cap;
