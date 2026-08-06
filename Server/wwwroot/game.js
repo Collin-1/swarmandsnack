@@ -1672,6 +1672,108 @@
     return a;
   }
 
+  // ---- Creature sprites ---------------------------------------------------
+  //
+  // The dock art is rendered with real lighting, so flat filled discs sat on top
+  // of it looking like stickers. These creatures need volume: a light-side
+  // falloff, a rim catch on the dark side, a specular, and a shadow on the deck.
+  //
+  // Doing that per entity per frame would mean rebuilding four gradients for
+  // each of up to 48 creatures. Instead each appearance is baked once into an
+  // offscreen canvas — eight team colours times leader and underling is sixteen
+  // sprites for the whole game — and the frame just blits one. That is fewer
+  // canvas operations than the flat version it replaces.
+  const SPRITE_BAKE_RADIUS = 48; // generous, so downscaling to 12-24px stays crisp
+  const SPRITE_GLOW_SCALE = 1.7;
+  const creatureSprites = new Map();
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  /** amount > 0 lifts toward white, < 0 sinks toward black. */
+  function shade(hex, amount) {
+    const [r, g, b] = hexToRgb(hex);
+    const t = amount > 0 ? 255 : 0;
+    const k = Math.abs(amount);
+    return `rgb(${Math.round(r + (t - r) * k)},${Math.round(g + (t - g) * k)},${Math.round(b + (t - b) * k)})`;
+  }
+  function rgba(hex, alpha) {
+    const [r, g, b] = hexToRgb(hex);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // Keyed on the colour itself rather than the team name, so the caller can pass
+  // the palette entry it already has instead of threading the team key down.
+  function creatureSprite(base, isLeader) {
+    const key = `${base}|${isLeader ? "L" : "U"}`;
+    const cached = creatureSprites.get(key);
+    if (cached) return cached;
+
+    const R = SPRITE_BAKE_RADIUS;
+    const half = Math.ceil(R * SPRITE_GLOW_SCALE);
+
+    const sprite = document.createElement("canvas");
+    sprite.width = sprite.height = half * 2;
+    const g = sprite.getContext("2d");
+    g.translate(half, half);
+
+    // Emissive bloom, matching the glow the crystals and conduits throw.
+    const glow = g.createRadialGradient(0, 0, R * 0.75, 0, 0, R * SPRITE_GLOW_SCALE);
+    glow.addColorStop(0, rgba(base, isLeader ? 0.45 : 0.34));
+    glow.addColorStop(1, rgba(base, 0));
+    g.fillStyle = glow;
+    g.beginPath();
+    g.arc(0, 0, R * SPRITE_GLOW_SCALE, 0, Math.PI * 2);
+    g.fill();
+
+    // Body. Light comes from the upper left, same as the crates and drums.
+    const body = g.createRadialGradient(-R * 0.34, -R * 0.4, R * 0.1, 0, 0, R);
+    body.addColorStop(0, shade(base, 0.55));
+    body.addColorStop(0.45, base);
+    body.addColorStop(1, shade(base, -0.5));
+    g.fillStyle = body;
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.fill();
+
+    // Rim light on the shadow side. This is what actually reads as roundness —
+    // without it a gradient alone still looks like a flat disc.
+    g.save();
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.clip();
+    const rim = g.createLinearGradient(-R, -R, R, R);
+    rim.addColorStop(0, rgba(base, 0));
+    rim.addColorStop(0.6, rgba(base, 0));
+    rim.addColorStop(1, shade(base, 0.85));
+    g.strokeStyle = rim;
+    g.lineWidth = R * 0.17;
+    g.beginPath();
+    g.arc(0, 0, R * 0.94, 0, Math.PI * 2);
+    g.stroke();
+    g.restore();
+
+    // Specular: a soft wet highlight, tilted to sit on the light side.
+    const spec = g.createRadialGradient(-R * 0.36, -R * 0.44, 0, -R * 0.36, -R * 0.44, R * 0.44);
+    spec.addColorStop(0, "rgba(255,255,255,0.72)");
+    spec.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = spec;
+    g.beginPath();
+    g.ellipse(-R * 0.36, -R * 0.44, R * 0.42, R * 0.28, -0.6, 0, Math.PI * 2);
+    g.fill();
+
+    // Contain it against the busy deck.
+    g.lineWidth = R * (isLeader ? 0.09 : 0.08);
+    g.strokeStyle = "rgba(2,6,16,0.6)";
+    g.beginPath();
+    g.arc(0, 0, R - g.lineWidth / 2, 0, Math.PI * 2);
+    g.stroke();
+
+    creatureSprites.set(key, sprite);
+    return sprite;
+  }
+
   function drawCreature(entity, anim, colors, isLeader, time, seconds) {
     const speed = Math.hypot(entity.vx || 0, entity.vy || 0);
 
@@ -1699,26 +1801,33 @@
     const ry = radius * (1 - stretch * 0.75);
     const angle = Math.atan2(ly, lx);
 
+    // Contact shadow. Everything in the dock casts one, and without it the
+    // creatures read as floating above the deck rather than standing on it.
+    // Offset down-right, away from the upper-left key light baked into the body.
+    ctx.save();
+    ctx.globalAlpha = isLeader ? 0.34 : 0.26;
+    ctx.fillStyle = "#01040a";
+    ctx.beginPath();
+    ctx.ellipse(entity.x + radius * 0.14, entity.y + radius * 0.2,
+                rx * 0.94, ry * 0.72, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const sprite = creatureSprite(isLeader ? colors.leader : colors.underling, isLeader);
+    const half = sprite.width / 2;
+    const k = radius / SPRITE_BAKE_RADIUS;
+
     ctx.save();
     ctx.translate(entity.x, entity.y);
+    // Rotate, scale, then rotate back. Composing R·S·R⁻¹ stretches the silhouette
+    // along the direction of travel exactly as R·S would, but leaves the sprite's
+    // content screen-aligned — so the baked highlight and rim stay lit from the
+    // upper left like everything else in the dock, instead of swinging around the
+    // body as the creature turns.
     ctx.rotate(angle);
-
-    // Emissive halo: cheap flat circle rather than a per-entity gradient, which
-    // would mean rebuilding 48 gradients every frame.
-    ctx.globalAlpha = isLeader ? 0.3 : 0.22;
-    ctx.fillStyle = colors.leader;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, rx * 1.55, ry * 1.55, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = isLeader ? colors.leader : colors.underling;
-    ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    ctx.lineWidth = isLeader ? 4 : 2;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.scale(k * (1 + stretch), k * (1 - stretch * 0.75));
+    ctx.rotate(-angle);
+    ctx.drawImage(sprite, -half, -half);
     ctx.restore();
 
     // Eyes are drawn unrotated so they stay upright, offset toward the way the
@@ -1728,7 +1837,14 @@
     const ey = entity.y + ly * radius * 0.3;
 
     ctx.save();
-    ctx.fillStyle = "#ffffff";
+
+    // Socket: a dark ring so the eye sits in the body rather than on it.
+    ctx.fillStyle = "rgba(3,8,18,0.5)";
+    ctx.beginPath();
+    ctx.arc(ex, ey, eyeR * 1.16, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#f4f8ff";
     ctx.beginPath();
     ctx.arc(ex, ey, eyeR, 0, Math.PI * 2);
     ctx.fill();
@@ -1736,6 +1852,12 @@
     ctx.fillStyle = "#0b1020";
     ctx.beginPath();
     ctx.arc(ex + lx * eyeR * 0.34, ey + ly * eyeR * 0.34, eyeR * 0.46, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Catchlight, on the same upper-left key light as the body specular.
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.beginPath();
+    ctx.arc(ex - eyeR * 0.34, ey - eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
