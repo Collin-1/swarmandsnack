@@ -1640,12 +1640,12 @@
   // At 36px for a leader and 24px for an underling, illustrated detail is
   // invisible but motion reads instantly, so the liveliness is all animation:
   // eyes that lead the direction of travel, stretch along velocity, an idle
-  // bob, a trail behind leaders, and a reaction when something gets eaten.
+  // bob, a thruster flare while under way, and a reaction when something gets eaten.
   //
   // Everything here is derived from vx/vy already in the snapshot, so none of
   // it costs the server anything.
 
-  /** id -> { lookX, lookY, phase, pop, trail } */
+  /** id -> { lookX, lookY, phase, pop } */
   const creatureAnim = new Map();
   const eatBursts = [];
   let animPruneCounter = 0;
@@ -1666,10 +1666,214 @@
   function animFor(id) {
     let a = creatureAnim.get(id);
     if (!a) {
-      a = { lookX: 0, lookY: 1, phase: phaseFor(id), pop: 0, trail: [] };
+      a = { lookX: 0, lookY: 1, phase: phaseFor(id), pop: 0 };
       creatureAnim.set(id, a);
     }
     return a;
+  }
+
+  // ---- Creature sprites ---------------------------------------------------
+  //
+  // The dock art is rendered with real lighting, so flat filled discs sat on top
+  // of it looking like stickers. These creatures need volume: a light-side
+  // falloff, a rim catch on the dark side, a specular, and a shadow on the deck.
+  //
+  // Doing that per entity per frame would mean rebuilding four gradients for
+  // each of up to 48 creatures. Instead each appearance is baked once into an
+  // offscreen canvas — eight team colours times leader and underling is sixteen
+  // sprites for the whole game — and the frame just blits one. That is fewer
+  // canvas operations than the flat version it replaces.
+  // A creature is two baked layers, and they are split because they need
+  // opposite things from the transform:
+  //
+  //   shell — dark armour plates with glowing slots. Part of the character's
+  //           orientation, so it ROTATES to face travel. Kept deliberately flat
+  //           and low contrast; the glowing slots are what should read as
+  //           turning, not a shading gradient sweeping round the plates.
+  //   orb   — the glossy lit body. Its highlight has to stay lit from the upper
+  //           left like every crate in the dock, so it does NOT rotate.
+  //
+  // Baking both means a frame is two drawImage calls per creature instead of a
+  // dozen gradient rebuilds.
+  const SPRITE_BAKE_RADIUS = 48; // generous, so downscaling to 12-24px stays crisp
+  const SPRITE_GLOW_SCALE = 1.7;
+  const ORB_RATIO = 0.74;        // orb sits nested inside the shell ring
+  const creatureSprites = new Map();
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  /** amount > 0 lifts toward white, < 0 sinks toward black. */
+  function shade(hex, amount) {
+    const [r, g, b] = hexToRgb(hex);
+    const t = amount > 0 ? 255 : 0;
+    const k = Math.abs(amount);
+    return `rgb(${Math.round(r + (t - r) * k)},${Math.round(g + (t - g) * k)},${Math.round(b + (t - b) * k)})`;
+  }
+  function rgba(hex, alpha) {
+    const [r, g, b] = hexToRgb(hex);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function blankSprite() {
+    const half = Math.ceil(SPRITE_BAKE_RADIUS * SPRITE_GLOW_SCALE);
+    const c = document.createElement("canvas");
+    c.width = c.height = half * 2;
+    const g = c.getContext("2d");
+    g.translate(half, half);
+    return { canvas: c, g, half };
+  }
+
+  // The glossy body. Keyed on the colour itself rather than the team name, so
+  // the caller can pass the palette entry it already has.
+  function orbSprite(base, isLeader) {
+    const key = `orb|${base}|${isLeader ? "L" : "U"}`;
+    const cached = creatureSprites.get(key);
+    if (cached) return cached;
+
+    const { canvas, g } = blankSprite();
+    const R = SPRITE_BAKE_RADIUS * ORB_RATIO;
+
+    // No bloom here — it lives in the shell sprite, which is drawn first. Baking
+    // it into the orb painted the glow straight over the armour plates and
+    // washed the shell out to a faint ring.
+
+    // Body. Light comes from the upper left, same as the crates and drums.
+    const body = g.createRadialGradient(-R * 0.34, -R * 0.4, R * 0.1, 0, 0, R);
+    body.addColorStop(0, shade(base, 0.28));
+    body.addColorStop(0.45, base);
+    body.addColorStop(1, shade(base, -0.5));
+    g.fillStyle = body;
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.fill();
+
+    // Rim light on the shadow side. This is what actually reads as roundness —
+    // without it a gradient alone still looks like a flat disc.
+    g.save();
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.clip();
+    const rim = g.createLinearGradient(-R, -R, R, R);
+    rim.addColorStop(0, rgba(base, 0));
+    rim.addColorStop(0.6, rgba(base, 0));
+    rim.addColorStop(1, shade(base, 0.5));
+    g.strokeStyle = rim;
+    g.lineWidth = R * 0.17;
+    g.beginPath();
+    g.arc(0, 0, R * 0.93, 0, Math.PI * 2);
+    g.stroke();
+    g.restore();
+
+    // A broad soft sheen rather than a tight wet highlight. The hard specular
+    // this replaces made the creatures look like polished glass against a dock
+    // built from matte plate. Wide, dim, and falling off early keeps the sense
+    // of a curved surface without the shine.
+    const spec = g.createRadialGradient(-R * 0.34, -R * 0.4, 0, -R * 0.34, -R * 0.4, R * 0.55);
+    spec.addColorStop(0, "rgba(255,255,255,0.26)");
+    spec.addColorStop(0.45, "rgba(255,255,255,0.09)");
+    spec.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = spec;
+    g.beginPath();
+    g.ellipse(-R * 0.34, -R * 0.4, R * 0.5, R * 0.36, -0.6, 0, Math.PI * 2);
+    g.fill();
+
+    creatureSprites.set(key, canvas);
+    return canvas;
+  }
+
+  // The armour shell: dark segmented plates around the orb with lit slots set
+  // into them. Baked with the front pointing along +X, and rotated to face
+  // travel at draw time.
+  //
+  // The slots glow in the team colour rather than a fixed accent hue. The
+  // reference art pairs cyan with magenta, but a fixed second hue collides with
+  // half of an eight-colour roster — magenta trim on the fuchsia and rose teams
+  // reads as a different player. The forward slot is instead brightened toward
+  // white, which gives the same two-tone look and still marks which way the
+  // creature is pointing.
+  function shellSprite(base, isLeader) {
+    const key = `shell|${base}|${isLeader ? "L" : "U"}`;
+    const cached = creatureSprites.get(key);
+    if (cached) return cached;
+
+    const { canvas, g } = blankSprite();
+    const R = SPRITE_BAKE_RADIUS;
+    const outer = R * 0.99;
+    const inner = R * 0.68;
+    const mid = (outer + inner) / 2;
+    const thickness = outer - inner;
+
+    // Emissive bloom goes down first, so it haloes the whole creature from
+    // behind instead of painting over the plates.
+    const glow = g.createRadialGradient(0, 0, R * 0.8, 0, 0, R * SPRITE_GLOW_SCALE);
+    glow.addColorStop(0, rgba(base, isLeader ? 0.38 : 0.28));
+    glow.addColorStop(1, rgba(base, 0));
+    g.fillStyle = glow;
+    g.beginPath();
+    g.arc(0, 0, R * SPRITE_GLOW_SCALE, 0, Math.PI * 2);
+    g.fill();
+
+    const plates = isLeader ? 6 : 4;
+    const gap = isLeader ? 0.16 : 0.24; // radians of bare space between plates
+    const step = (Math.PI * 2) / plates;
+
+    // Plates. Near-flat dark metal: any strong shading here would sweep around
+    // the ring as the creature turns and fight the fixed lighting on the orb.
+    // Light enough to stay legible against both the deck and the bloom.
+    g.lineCap = "butt";
+    g.lineWidth = thickness;
+    for (let i = 0; i < plates; i++) {
+      const centre = i * step;
+      const plate = g.createLinearGradient(0, -outer, 0, outer);
+      plate.addColorStop(0, "#33425c");
+      plate.addColorStop(0.5, "#1d2942");
+      plate.addColorStop(1, "#0d1526");
+      g.strokeStyle = plate;
+      g.beginPath();
+      g.arc(0, 0, mid, centre - step / 2 + gap / 2, centre + step / 2 - gap / 2);
+      g.stroke();
+    }
+
+    // Dark seat under the orb so the plates read as sitting behind it.
+    g.fillStyle = "#080d16";
+    g.beginPath();
+    g.arc(0, 0, inner + thickness * 0.12, 0, Math.PI * 2);
+    g.fill();
+
+    // Lit slots. Front is hottest so facing is unmistakable at 24px.
+    const slots = isLeader
+      ? [{ a: 0, w: 0.30, hot: 0.75 }, { a: Math.PI * 0.62, w: 0.22, hot: 0.15 },
+         { a: -Math.PI * 0.62, w: 0.22, hot: 0.15 }, { a: Math.PI, w: 0.18, hot: -0.1 }]
+      : [{ a: 0, w: 0.30, hot: 0.6 }, { a: Math.PI * 0.7, w: 0.2, hot: 0.05 },
+         { a: -Math.PI * 0.7, w: 0.2, hot: 0.05 }];
+
+    g.lineCap = "round";
+    for (const slot of slots) {
+      g.save();
+      g.shadowColor = rgba(base, 0.9);
+      g.shadowBlur = R * 0.3;
+      g.strokeStyle = shade(base, slot.hot);
+      g.lineWidth = thickness * 0.42;
+      g.beginPath();
+      g.arc(0, 0, mid, slot.a - slot.w / 2, slot.a + slot.w / 2);
+      g.stroke();
+      // Second pass without blur keeps the core of the slot crisp.
+      g.shadowBlur = 0;
+      g.stroke();
+      g.restore();
+    }
+
+    // Outline, so the silhouette holds against a busy deck.
+    g.strokeStyle = "rgba(2,6,16,0.7)";
+    g.lineWidth = R * 0.05;
+    g.beginPath();
+    g.arc(0, 0, outer, 0, Math.PI * 2);
+    g.stroke();
+
+    creatureSprites.set(key, canvas);
+    return canvas;
   }
 
   function drawCreature(entity, anim, colors, isLeader, time, seconds) {
@@ -1692,43 +1896,94 @@
     const bob = Math.sin(time / (speed > 4 ? 120 : 420) + anim.phase) * (isLeader ? 1.6 : 0.9);
     const radius = entity.radius + bob + anim.pop;
 
-    // Stretch along the direction of travel, squashing across it. Volume is
-    // roughly preserved so it reads as a body flexing, not just scaling.
-    const stretch = Math.min(0.22, (speed / LEADER_SPEED) * 0.22);
+    // Stretch along the direction of travel, squashing across it. Kept subtle
+    // now that the body wears a rigid armour shell — the heavier squash that
+    // suited a soft blob made the plated ring read as a flattened hoop.
+    const stretch = Math.min(0.1, (speed / LEADER_SPEED) * 0.1);
     const rx = radius * (1 + stretch);
     const ry = radius * (1 - stretch * 0.75);
     const angle = Math.atan2(ly, lx);
 
+    // Contact shadow. Everything in the dock casts one, and without it the
+    // creatures read as floating above the deck rather than standing on it.
+    // Offset down-right, away from the upper-left key light baked into the body.
+    ctx.save();
+    ctx.globalAlpha = isLeader ? 0.34 : 0.26;
+    ctx.fillStyle = "#01040a";
+    ctx.beginPath();
+    ctx.ellipse(entity.x + radius * 0.14, entity.y + radius * 0.2,
+                rx * 0.94, ry * 0.72, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const base = isLeader ? colors.leader : colors.underling;
+    const shell = shellSprite(base, isLeader);
+    const orb = orbSprite(base, isLeader);
+    const half = shell.width / 2;
+    const k = radius / SPRITE_BAKE_RADIUS;
+    const sx = k * (1 + stretch);
+    const sy = k * (1 - stretch * 0.75);
+
+    // Thruster wash trailing the shell while under way, as in the move state of
+    // the reference sheet. Fades out entirely when idle so a parked creature is
+    // a clean silhouette.
+    const thrust = Math.min(1, speed / LEADER_SPEED);
+    if (thrust > 0.15) {
+      ctx.save();
+      ctx.translate(entity.x, entity.y);
+      ctx.rotate(angle);
+      ctx.globalAlpha = thrust * (isLeader ? 0.5 : 0.38);
+      const flare = ctx.createLinearGradient(-radius * 0.7, 0, -radius * 2.4, 0);
+      flare.addColorStop(0, rgba(base, 0.85));
+      flare.addColorStop(1, rgba(base, 0));
+      ctx.fillStyle = flare;
+      ctx.beginPath();
+      ctx.moveTo(-radius * 0.7, -radius * 0.5);
+      ctx.lineTo(-radius * (1.3 + thrust * 1.1), 0);
+      ctx.lineTo(-radius * 0.7, radius * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Shell rotates: which way the armour points IS the character facing.
     ctx.save();
     ctx.translate(entity.x, entity.y);
     ctx.rotate(angle);
+    ctx.scale(sx, sy);
+    ctx.drawImage(shell, -half, -half);
+    ctx.restore();
 
-    // Emissive halo: cheap flat circle rather than a per-entity gradient, which
-    // would mean rebuilding 48 gradients every frame.
-    ctx.globalAlpha = isLeader ? 0.3 : 0.22;
-    ctx.fillStyle = colors.leader;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, rx * 1.55, ry * 1.55, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = isLeader ? colors.leader : colors.underling;
-    ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    ctx.lineWidth = isLeader ? 4 : 2;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    // Orb does not. Composing R·S·R⁻¹ stretches the silhouette along the
+    // direction of travel exactly as R·S would, but leaves the sprite's content
+    // screen-aligned — so the baked highlight and rim stay lit from the upper
+    // left like everything else in the dock, instead of swinging around the body
+    // as the creature turns.
+    ctx.save();
+    ctx.translate(entity.x, entity.y);
+    ctx.rotate(angle);
+    ctx.scale(sx, sy);
+    ctx.rotate(-angle);
+    ctx.drawImage(orb, -half, -half);
     ctx.restore();
 
     // Eyes are drawn unrotated so they stay upright, offset toward the way the
-    // creature is heading.
-    const eyeR = isLeader ? radius / 3 : radius / 2.1;
-    const ex = entity.x + lx * radius * 0.3;
-    const ey = entity.y + ly * radius * 0.3;
+    // creature is heading. Sized against the orb rather than the whole creature,
+    // since the shell now takes the outer quarter of the radius.
+    const orbR = radius * ORB_RATIO;
+    const eyeR = orbR * (isLeader ? 0.46 : 0.55);
+    const ex = entity.x + lx * orbR * 0.32;
+    const ey = entity.y + ly * orbR * 0.32;
 
     ctx.save();
-    ctx.fillStyle = "#ffffff";
+
+    // Socket: a dark ring so the eye sits in the body rather than on it.
+    ctx.fillStyle = "rgba(3,8,18,0.5)";
+    ctx.beginPath();
+    ctx.arc(ex, ey, eyeR * 1.16, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#f4f8ff";
     ctx.beginPath();
     ctx.arc(ex, ey, eyeR, 0, Math.PI * 2);
     ctx.fill();
@@ -1736,6 +1991,14 @@
     ctx.fillStyle = "#0b1020";
     ctx.beginPath();
     ctx.arc(ex + lx * eyeR * 0.34, ey + ly * eyeR * 0.34, eyeR * 0.46, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Catchlight, on the same upper-left key light as the body sheen. Kept
+    // brighter than the body highlight on purpose — a live eye needs it, and at
+    // this size it is only a couple of pixels.
+    ctx.fillStyle = "rgba(255,255,255,0.62)";
+    ctx.beginPath();
+    ctx.arc(ex - eyeR * 0.34, ey - eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
@@ -1752,28 +2015,11 @@
     const seen = new Set();
     creatureFrame++;
 
-    // Trails go down first so bodies sit on top of them.
-    for (const player of state.players) {
-      const colors = paletteFor(player.teamColor);
-      const anim = animFor(player.leader.id);
-      const speed = Math.hypot(player.leader.vx || 0, player.leader.vy || 0);
-      if (speed > 10) {
-        anim.trail.push({ x: player.leader.x, y: player.leader.y });
-        if (anim.trail.length > 7) anim.trail.shift();
-      } else if (anim.trail.length) {
-        anim.trail.shift();
-      }
-      ctx.save();
-      for (let i = 0; i < anim.trail.length; i++) {
-        const t = (i + 1) / (anim.trail.length + 1);
-        ctx.globalAlpha = t * 0.24;
-        ctx.fillStyle = colors.leader;
-        ctx.beginPath();
-        ctx.arc(anim.trail[i].x, anim.trail[i].y, player.leader.radius * t * 0.85, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
+    // The leader wake that used to be drawn here is gone. It sampled positions
+    // once a frame and drew a circle at each, which read as a string of discrete
+    // beads behind a moving leader — fine behind a plain disc, but obviously
+    // wrong next to the thruster flare the shell now emits. The flare carries
+    // the sense of speed on its own.
 
     for (const player of state.players) {
       const colors = paletteFor(player.teamColor);
