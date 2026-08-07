@@ -55,6 +55,9 @@
   const audioBtn = document.getElementById("audioBtn");
   const audioIconEl = document.getElementById("audioIcon");
   const audioVolumeEl = document.getElementById("audioVolume");
+  const panelToggle = document.getElementById("panelToggle");
+  const panelToggleCodeEl = document.getElementById("panelToggleCode");
+  const minimapCanvas = document.getElementById("minimap");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -616,6 +619,8 @@
 
     lobbyCount = state.players?.length ?? lobbyCount;
     const inLobby = !state.isActive && !state.winnerId;
+
+    setPlayingLayout(!!state.isActive);
 
     // Music follows the room state. The victory sting is started by the
     // GameOver handler instead, so don't tread on it while a winner stands.
@@ -1465,6 +1470,7 @@
     if (signature !== staticLayerSignature) {
       staticLayerSignature = signature;
       renderStaticLayer();
+      renderMinimapBase();
     }
 
     updateCamera();
@@ -1482,9 +1488,126 @@
     drawEntities(renderState);
     ctx.restore();
 
+    // These two are drawn in screen space, after the camera transform is undone.
+    drawOffscreenMarkers(renderState);
+    drawMinimap(renderState);
+
     drawScoreboard(renderState);
     // Avatars follow the newest roster rather than the delayed render state.
     drawAvatars(serverState);
+  }
+
+  // ---- Minimap ------------------------------------------------------------
+  //
+  // The world is 2880x1920 and the viewport shows 960x640 of it, so a player
+  // can see a fifteenth of the map at a time and has no idea where anyone is.
+  //
+  // The background is the already-rendered static layer scaled down once, when
+  // the level changes — redrawing rooms, walls and thickets every frame for a
+  // 192px thumbnail would cost more than the game view does.
+  const MINIMAP_HEIGHT = 128;
+  let minimapBase = null;
+  let minimapCtx = null;
+
+  function renderMinimapBase() {
+    if (!minimapCanvas) return;
+    // Match the world's aspect: the half world used for four or fewer players
+    // is 1440x1920, a completely different shape from the full 2880x1920.
+    const width = Math.round(MINIMAP_HEIGHT * (worldWidth / worldHeight));
+    minimapCanvas.width = width;
+    minimapCanvas.height = MINIMAP_HEIGHT;
+    minimapBase = document.createElement("canvas");
+    minimapBase.width = width;
+    minimapBase.height = MINIMAP_HEIGHT;
+    minimapBase
+      .getContext("2d")
+      .drawImage(staticLayer, 0, 0, worldWidth, worldHeight, 0, 0, width, MINIMAP_HEIGHT);
+    minimapCtx = minimapCanvas.getContext("2d");
+  }
+
+  function drawMinimap(state) {
+    if (!minimapBase || !minimapCtx || !state || !state.players) return;
+    const w = minimapCanvas.width;
+    const h = minimapCanvas.height;
+    const kx = w / worldWidth;
+    const ky = h / worldHeight;
+
+    minimapCtx.clearRect(0, 0, w, h);
+    minimapCtx.globalAlpha = 0.85;
+    minimapCtx.drawImage(minimapBase, 0, 0);
+    minimapCtx.globalAlpha = 1;
+
+    // Where you are looking.
+    minimapCtx.strokeStyle = "rgba(226,232,240,0.5)";
+    minimapCtx.lineWidth = 1;
+    minimapCtx.strokeRect(
+      Math.round(camera.x * kx) + 0.5, Math.round(camera.y * ky) + 0.5,
+      Math.round(canvasWidth * kx), Math.round(canvasHeight * ky),
+    );
+
+    for (const player of state.players) {
+      const isSelf = player.connectionId === myPlayerId;
+      const colors = paletteFor(player.teamColor);
+      const x = player.leader.x * kx;
+      const y = player.leader.y * ky;
+      minimapCtx.fillStyle = colors.leader;
+      minimapCtx.beginPath();
+      minimapCtx.arc(x, y, isSelf ? 3.2 : 2.4, 0, Math.PI * 2);
+      minimapCtx.fill();
+      if (isSelf) {
+        minimapCtx.strokeStyle = "rgba(255,255,255,0.9)";
+        minimapCtx.lineWidth = 1.2;
+        minimapCtx.stroke();
+      }
+    }
+  }
+
+  // ---- Off-screen opponent markers ----------------------------------------
+  //
+  // A chevron pinned to the edge of the viewport, pointing at an opponent you
+  // cannot see, in their team colour. Without it the first warning you get that
+  // someone is hunting you is them arriving.
+  function drawOffscreenMarkers(state) {
+    if (!state || !state.players) return;
+    const pad = 20;
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+
+    for (const player of state.players) {
+      if (player.connectionId === myPlayerId) continue;
+      const sx = player.leader.x - camera.x;
+      const sy = player.leader.y - camera.y;
+      if (sx >= 0 && sx <= canvasWidth && sy >= 0 && sy <= canvasHeight) continue;
+
+      const dx = sx - cx;
+      const dy = sy - cy;
+      if (dx === 0 && dy === 0) continue;
+      // Push the point out to whichever edge it crosses first.
+      const scale = Math.min(
+        (cx - pad) / Math.max(Math.abs(dx), 1e-6),
+        (cy - pad) / Math.max(Math.abs(dy), 1e-6),
+      );
+      const mx = cx + dx * scale;
+      const my = cy + dy * scale;
+      const colors = paletteFor(player.teamColor);
+
+      ctx.save();
+      ctx.translate(mx, my);
+      ctx.rotate(Math.atan2(dy, dx));
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = colors.leader;
+      ctx.beginPath();
+      ctx.moveTo(9, 0);
+      ctx.lineTo(-6, -6.5);
+      ctx.lineTo(-3, 0);
+      ctx.lineTo(-6, 6.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = "rgba(2,6,16,0.65)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   function renderStaticLayer() {
@@ -2191,6 +2314,15 @@
       mic.className = "avatar-mic";
       disc.appendChild(mic);
 
+      // Swarm count rides on the avatar rather than in a separate scoreboard.
+      // Two strips competing for the same bar squeezed the avatars down to one
+      // visible player; merging them means the roster and the score are one
+      // thing and both fit.
+      const score = document.createElement("span");
+      score.className = "avatar-score";
+      score.style.color = colors.leader;
+      disc.appendChild(score);
+
       const label = document.createElement("span");
       label.className = "avatar-name";
       label.textContent = player.connectionId === myPlayerId ? `${name} (you)` : name;
@@ -2199,7 +2331,7 @@
       wrap.appendChild(disc);
       wrap.appendChild(label);
       avatarBarEl.appendChild(wrap);
-      avatarEls.set(player.connectionId, { wrap, mic });
+      avatarEls.set(player.connectionId, { wrap, mic, score });
     }
   }
 
@@ -2217,9 +2349,17 @@
       rebuildAvatars(players);
     }
 
+    const counts = new Map(players.map((p) => [p.connectionId, p.underlings?.length ?? 0]));
+
     for (const [id, el] of avatarEls) {
       const micOn = VoiceClient.isMicOn(id);
       const speaking = VoiceClient.isSpeaking(id);
+      const count = counts.get(id);
+      if (el.score && el.wrap._count !== count) {
+        el.wrap._count = count;
+        el.score.textContent = count == null ? "" : String(count);
+        el.wrap.classList.toggle("eliminated", count === 0);
+      }
       if (el.wrap._micOn !== micOn) {
         el.wrap._micOn = micOn;
         el.wrap.classList.toggle("muted", !micOn);
@@ -2587,6 +2727,30 @@
         micBtn.disabled = !VoiceClient.isSupported();
         updateMicButton();
       }
+    });
+  }
+
+  // ---- Match layout mode --------------------------------------------------
+  //
+  // In a match the setup panel is collapsed and the page re-fits against a
+  // smaller design size, which is what buys the canvas its full size back on a
+  // laptop. Only touch the DOM on an actual transition — this runs every
+  // snapshot.
+  let playingLayout = null;
+
+  function setPlayingLayout(playing) {
+    if (playingLayout === playing) return;
+    playingLayout = playing;
+    document.body.classList.toggle("is-playing", playing);
+    if (!playing) document.body.classList.remove("panel-open");
+    if (panelToggleCodeEl && roomId) panelToggleCodeEl.textContent = roomId;
+    // The design size just changed, so the scale has to be recomputed.
+    if (typeof window.refitUiScale === "function") window.refitUiScale();
+  }
+
+  if (panelToggle) {
+    panelToggle.addEventListener("click", () => {
+      document.body.classList.toggle("panel-open");
     });
   }
 
