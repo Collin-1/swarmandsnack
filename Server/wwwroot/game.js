@@ -1741,7 +1741,7 @@
 
     // Body. Light comes from the upper left, same as the crates and drums.
     const body = g.createRadialGradient(-R * 0.34, -R * 0.4, R * 0.1, 0, 0, R);
-    body.addColorStop(0, shade(base, 0.45));
+    body.addColorStop(0, shade(base, 0.28));
     body.addColorStop(0.45, base);
     body.addColorStop(1, shade(base, -0.5));
     g.fillStyle = body;
@@ -1758,7 +1758,7 @@
     const rim = g.createLinearGradient(-R, -R, R, R);
     rim.addColorStop(0, rgba(base, 0));
     rim.addColorStop(0.6, rgba(base, 0));
-    rim.addColorStop(1, shade(base, 0.85));
+    rim.addColorStop(1, shade(base, 0.5));
     g.strokeStyle = rim;
     g.lineWidth = R * 0.17;
     g.beginPath();
@@ -1766,13 +1766,17 @@
     g.stroke();
     g.restore();
 
-    // Specular: a soft wet highlight, tilted to sit on the light side.
-    const spec = g.createRadialGradient(-R * 0.36, -R * 0.44, 0, -R * 0.36, -R * 0.44, R * 0.44);
-    spec.addColorStop(0, "rgba(255,255,255,0.6)");
+    // A broad soft sheen rather than a tight wet highlight. The hard specular
+    // this replaces made the creatures look like polished glass against a dock
+    // built from matte plate. Wide, dim, and falling off early keeps the sense
+    // of a curved surface without the shine.
+    const spec = g.createRadialGradient(-R * 0.34, -R * 0.4, 0, -R * 0.34, -R * 0.4, R * 0.55);
+    spec.addColorStop(0, "rgba(255,255,255,0.26)");
+    spec.addColorStop(0.45, "rgba(255,255,255,0.09)");
     spec.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = spec;
     g.beginPath();
-    g.ellipse(-R * 0.36, -R * 0.44, R * 0.42, R * 0.28, -0.6, 0, Math.PI * 2);
+    g.ellipse(-R * 0.34, -R * 0.4, R * 0.5, R * 0.36, -0.6, 0, Math.PI * 2);
     g.fill();
 
     creatureSprites.set(key, canvas);
@@ -1989,8 +1993,10 @@
     ctx.arc(ex + lx * eyeR * 0.34, ey + ly * eyeR * 0.34, eyeR * 0.46, 0, Math.PI * 2);
     ctx.fill();
 
-    // Catchlight, on the same upper-left key light as the body specular.
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    // Catchlight, on the same upper-left key light as the body sheen. Kept
+    // brighter than the body highlight on purpose — a live eye needs it, and at
+    // this size it is only a couple of pixels.
+    ctx.fillStyle = "rgba(255,255,255,0.62)";
     ctx.beginPath();
     ctx.arc(ex - eyeR * 0.34, ey - eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2);
     ctx.fill();
