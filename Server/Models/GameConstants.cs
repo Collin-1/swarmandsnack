@@ -29,6 +29,67 @@ public static class GameConstants
     public const int MinPlayersPerRoom = 2;
     public const int MaxPlayersPerRoom = 8;
 
+    // ---- Snack economy ---------------------------------------------------
+    //
+    // One number does three jobs. Snack is what a leader has eaten and not yet
+    // banked: it is score-in-waiting, it is the charge toward Apex, and it is
+    // the bounty another player collects by catching you. Because it is one
+    // number, every decision is the same fork — cash out, or push your luck.
+
+    public const int SnackForApex = 5;
+    public const float ApexDurationSeconds = 12f;
+
+    // Apex has to be faster than an empty leader or it cannot hunt at all.
+    // Measured: at parity an Apex chased a fleeing opponent for a full window
+    // and never closed, because "escape" was just holding one direction. The
+    // edge is deliberately small — enough that fleeing in a straight line loses,
+    // little enough that doors, thickets and corners still save you.
+    public const float ApexSpeedMultiplier = 1.15f;
+
+    // Being eaten has to leave you briefly untouchable. Without it the kill
+    // re-fires on every tick the two leaders overlap: one Apex farmed a single
+    // victim 255 times in one window, because respawning put the prey back in
+    // reach of a hunter that was still chasing.
+    public const float RespawnProtectionSeconds = 2.5f;
+
+    // Carrying is slow. This is the pressure that stops a player quietly
+    // accumulating to Apex in a corner, and it is why holding 4 is the
+    // frightening part. Apex clears the penalty entirely, so the transformation
+    // reads as relief as well as power.
+    public const float SnackSpeedPenaltyPerUnit = 0.025f;
+
+    // Banking is a commitment, not a touch. Reaching home with a full belly
+    // should be a climax, so it takes a moment and an enemy leader can spoil it.
+    public const float BankSecondsRequired = 1f;
+    public const float BankInterruptRadius = 90f;
+
+    // Food is conserved: nothing is destroyed by being banked, it re-enters the
+    // world in the contested middle. That keeps the map fed and makes the centre
+    // permanently worth fighting over.
+    public const float FoodRespawnIntervalSeconds = 15f;
+    public const int FoodRespawnBatchMin = 3;
+    public const int FoodRespawnBatchMax = 5;
+    public const int MaxNeutralUnderlings = 24;
+    // Half the shorter world axis: wide enough to be a region, not a point.
+    public const float MidfieldRadius = 420f;
+
+    // With four or fewer players each player banks in their own room, which is
+    // where the interrupt drama lives. Above that the rooms are too far apart
+    // for anyone to ever be at your door, so banking moves to one shared zone in
+    // the contested middle and scoring means walking into danger instead of away
+    // from it.
+    public const int HomeBankMaxPlayers = 4;
+    public const float SharedBankRadius = 200f;
+
+    public const float MatchDurationSeconds = 360f; // 6 minutes
+
+    /// <summary>
+    /// Banked total needed to win outright. More players chasing the same food
+    /// makes every bank harder to complete, so the bar comes down as the room
+    /// fills; otherwise a big match could only ever be decided on the clock.
+    /// </summary>
+    public static int WinThreshold(int playerCount) => playerCount <= HomeBankMaxPlayers ? 12 : 9;
+
     // Colour keys assigned to players in join order. The client maps these keys to
     // actual render colours, so this list only needs to stay in sync with the client palette.
     public static readonly string[] PlayerColorKeys =

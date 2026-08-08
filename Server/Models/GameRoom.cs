@@ -86,6 +86,32 @@ public class GameRoom
     public float EffectiveWorldWidth =>
         IsActive ? _frozenWorldWidth : Level.WorldWidthFor(_players.Count);
 
+    // ---- Snack economy ---------------------------------------------------
+
+    /// <summary>
+    /// Food belonging to nobody. Underlings enter this pool when they respawn in
+    /// the midfield and when a loaded leader is caught and spills what it was
+    /// carrying, so a kill puts its bounty back on the table for everyone rather
+    /// than handing it to the killer.
+    /// </summary>
+    public List<Underling> NeutralUnderlings { get; } = new();
+
+    /// <summary>Seconds of match left. Guarantees a match ends on the clock.</summary>
+    public float SecondsRemaining { get; set; }
+
+    /// <summary>Counts down to the next midfield food drop.</summary>
+    public float FoodTimerSeconds { get; set; }
+
+    /// <summary>Banked total that wins outright, fixed when the match starts.</summary>
+    public int WinThreshold { get; private set; }
+
+    /// <summary>
+    /// With four or fewer players everyone banks at home; above that the rooms
+    /// are too far apart for a bank to ever be contested, so it moves to one
+    /// shared zone in the middle.
+    /// </summary>
+    public bool SharedBank { get; private set; }
+
     public void Start()
     {
         lock (_stateLock)
@@ -95,6 +121,15 @@ public class GameRoom
             WinnerId = null;
             WinnerBroadcasted = false;
             MatchEnded = false;
+            NeutralUnderlings.Clear();
+            SecondsRemaining = GameConstants.MatchDurationSeconds;
+            FoodTimerSeconds = GameConstants.FoodRespawnIntervalSeconds;
+            WinThreshold = GameConstants.WinThreshold(_players.Count);
+            SharedBank = _players.Count > GameConstants.HomeBankMaxPlayers;
+            foreach (var player in _players.Values)
+            {
+                player.ResetEconomy();
+            }
             Touch();
         }
     }

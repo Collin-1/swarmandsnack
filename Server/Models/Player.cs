@@ -23,6 +23,44 @@ public class Player
     // the same starting corner across rematches.
     public int SpawnIndex { get; set; }
 
+    // ---- Snack economy ---------------------------------------------------
+
+    /// <summary>Eaten but not yet banked. Score-in-waiting, Apex charge, and bounty.</summary>
+    public int Snack { get; set; }
+
+    /// <summary>Delivered home. Safe: nothing can take this away.</summary>
+    public int Banked { get; set; }
+
+    /// <summary>Seconds of Apex left. Above zero the leader can eat other leaders.</summary>
+    public float ApexSecondsLeft { get; set; }
+
+    /// <summary>Progress through the current banking commitment, in seconds.</summary>
+    public float BankProgressSeconds { get; set; }
+
+    /// <summary>Briefly untouchable after being eaten, so a kill can't re-fire every tick.</summary>
+    public float ProtectedSecondsLeft { get; set; }
+
+    public bool IsApex => ApexSecondsLeft > 0f;
+    public bool IsProtected => ProtectedSecondsLeft > 0f;
+
+    /// <summary>
+    /// Carrying slows you, which is what makes a full belly dangerous to hold.
+    /// Apex clears the penalty, so transforming feels like being unburdened.
+    /// </summary>
+    public float CurrentSpeed => IsApex
+        ? GameConstants.LeaderSpeed * GameConstants.ApexSpeedMultiplier
+        : GameConstants.LeaderSpeed *
+          (1f - GameConstants.SnackSpeedPenaltyPerUnit * Math.Min(Snack, GameConstants.SnackForApex));
+
+    public void ResetEconomy()
+    {
+        Snack = 0;
+        Banked = 0;
+        ApexSecondsLeft = 0f;
+        BankProgressSeconds = 0f;
+        ProtectedSecondsLeft = 0f;
+    }
+
     public void UpdateInput(Direction direction)
     {
         PendingDirection = direction;
