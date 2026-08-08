@@ -23,22 +23,19 @@ public class Player
     // the same starting corner across rematches.
     public int SpawnIndex { get; set; }
 
-    // ---- Snack economy ---------------------------------------------------
+    // ---- Round state -----------------------------------------------------
 
-    /// <summary>Eaten but not yet banked. Score-in-waiting, Apex charge, and bounty.</summary>
-    public int Snack { get; set; }
+    /// <summary>Underlings eaten this round. Hitting the threshold turns you super.</summary>
+    public int Eaten { get; set; }
 
-    /// <summary>Delivered home. Safe: nothing can take this away.</summary>
-    public int Banked { get; set; }
+    /// <summary>The hunter. Faster than everyone, and the only one who can eat a leader.</summary>
+    public bool IsSuper { get; set; }
 
-    /// <summary>Seconds of Apex left. Above zero the leader can eat other leaders.</summary>
-    public float ApexSecondsLeft { get; set; }
+    /// <summary>Caught by the super. Out until the round resets.</summary>
+    public bool IsOut { get; set; }
 
-    /// <summary>Progress through the current banking commitment, in seconds.</summary>
-    public float BankProgressSeconds { get; set; }
-
-    /// <summary>Briefly untouchable after being eaten, so a kill can't re-fire every tick.</summary>
-    public float ProtectedSecondsLeft { get; set; }
+    /// <summary>Rounds won by catching everyone before the clock ran out.</summary>
+    public int Wins { get; set; }
 
     /// <summary>
     /// Countdowns for underlings taken off this player. They regrow at the
@@ -46,28 +43,19 @@ public class Player
     /// </summary>
     public List<float> RegrowTimers { get; } = new();
 
-    /// <summary>How many underlings this player started the match with.</summary>
+    /// <summary>How many underlings this player started the round with.</summary>
     public int SwarmCapacity { get; set; }
 
-    public bool IsApex => ApexSecondsLeft > 0f;
-    public bool IsProtected => ProtectedSecondsLeft > 0f;
+    public float CurrentSpeed => IsSuper
+        ? GameConstants.LeaderSpeed * GameConstants.SuperSpeedMultiplier
+        : GameConstants.LeaderSpeed;
 
-    /// <summary>
-    /// Carrying slows you, which is what makes a full belly dangerous to hold.
-    /// Apex clears the penalty, so transforming feels like being unburdened.
-    /// </summary>
-    public float CurrentSpeed => IsApex
-        ? GameConstants.LeaderSpeed * GameConstants.ApexSpeedMultiplier
-        : GameConstants.LeaderSpeed *
-          (1f - GameConstants.SnackSpeedPenaltyPerUnit * Math.Min(Snack, GameConstants.SnackForApex));
-
-    public void ResetEconomy()
+    /// <summary>Clears everything that only lasts a round. Wins survive.</summary>
+    public void ResetForRound()
     {
-        Snack = 0;
-        Banked = 0;
-        ApexSecondsLeft = 0f;
-        BankProgressSeconds = 0f;
-        ProtectedSecondsLeft = 0f;
+        Eaten = 0;
+        IsSuper = false;
+        IsOut = false;
         RegrowTimers.Clear();
     }
 

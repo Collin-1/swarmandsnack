@@ -61,6 +61,7 @@
   const panelToggleCodeEl = document.getElementById("panelToggleCode");
   const minimapCanvas = document.getElementById("minimap");
   const matchClockEl = document.getElementById("matchClock");
+  const phaseBannerEl = document.getElementById("phaseBanner");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -71,7 +72,6 @@
   let worldHeight = canvasHeight;
   let worldRooms = [];
   let worldThickets = [];
-  let bankZones = [];
   const camera = { x: 0, y: 0 };
 
   let connection;
@@ -305,9 +305,6 @@
       if (typeof payload.worldHeight === "number") worldHeight = payload.worldHeight;
       if (Array.isArray(payload.rooms)) worldRooms = payload.rooms;
       if (Array.isArray(payload.thickets)) worldThickets = payload.thickets;
-      // Bank zones are static for a match but arrive with the snapshot, so the
-      // static layer is rebuilt when they first appear or the set changes.
-      if (Array.isArray(payload.bankZones)) bankZones = payload.bankZones;
 
       // The snapshot roster is the authoritative "who is in this room" list, in
       // the lobby and mid-match alike, so voice peering follows it.
@@ -1493,7 +1490,6 @@
 
     ctx.save();
     ctx.translate(-camera.x, -camera.y);
-    drawBankZones(renderState);
     drawEntities(renderState);
     ctx.restore();
 
@@ -1830,7 +1826,7 @@
   const SPRITE_BAKE_RADIUS = 48; // generous, so downscaling to 12-24px stays crisp
   const SPRITE_GLOW_SCALE = 1.7;
   const ORB_RATIO = 0.74;        // orb sits nested inside the shell ring
-  const SNACK_FOR_APEX = 5;      // must match GameConstants.SnackForApex
+  const EAT_TO_BECOME_SUPER = 5; // must match GameConstants.UnderlingsToBecomeSuper
   const creatureSprites = new Map();
 
   function hexToRgb(hex) {
@@ -1929,7 +1925,7 @@
   function shellSprite(base, isLeader, snack = 0, apex = false) {
     // One bake per appearance. Eight colours times six snack levels plus an Apex
     // form is a few dozen canvases for the whole game, and a frame stays a blit.
-    const level = Math.max(0, Math.min(SNACK_FOR_APEX, snack | 0));
+    const level = Math.max(0, Math.min(EAT_TO_BECOME_SUPER, snack | 0));
     const key = `shell|${base}|${isLeader ? "L" : "U"}|${apex ? "A" : level}`;
     const cached = creatureSprites.get(key);
     if (cached) return cached;
@@ -1945,7 +1941,7 @@
     // behind instead of painting over the plates. It swells with a full belly
     // and floods on Apex — a loaded player should be visible before you can
     // count their plates.
-    const load = apex ? 1 : level / SNACK_FOR_APEX;
+    const load = apex ? 1 : level / EAT_TO_BECOME_SUPER;
     const glow = g.createRadialGradient(0, 0, R * 0.8, 0, 0, R * SPRITE_GLOW_SCALE);
     glow.addColorStop(0, rgba(apex ? "#ffffff" : base,
       (isLeader ? 0.38 : 0.28) + load * (apex ? 0.5 : 0.3)));
@@ -2030,7 +2026,84 @@
     return canvas;
   }
 
-  const NO_META = { snack: 0, apex: false, protected: false };
+  const NO_META = { eaten: 0, super: false, out: false };
+
+  // ---- Electricity --------------------------------------------------------
+  //
+  // Arcs crackling around the super. Drawn live rather than baked, because the
+  // whole point is that it never looks the same twice — a baked sprite would
+  // read as a static ring and lose the sense of something barely contained.
+  //
+  // Each arc is a jagged polyline between two points on the creature's rim,
+  // bowed outward and jittered along its length. Redrawn on a slow flicker so
+  // it snaps between shapes instead of sliding.
+  const ARC_COUNT = 5;
+  const ARC_SEGMENTS = 7;
+  let boltSeed = 0;
+  let boltFrame = 0;
+
+  /** Cheap chaotic hash in [0,1). Modulo alone repeats too evenly to look electrical. */
+  function hash(seed, n) {
+    const v = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453;
+    return v - Math.floor(v);
+  }
+
+  function drawElectricity(x, y, radius, colour, time) {
+    // Reseed a few times a second: continuous motion would look like smoke,
+    // whereas snapping reads as electrical.
+    if (++boltFrame % 4 === 0) boltSeed = Math.random() * 1000;
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.shadowColor = "rgba(160, 230, 255, 0.9)";
+
+    for (let a = 0; a < ARC_COUNT; a++) {
+      // Deterministic per-arc values from the current seed, so all arcs change
+      // together on a flicker rather than shimmering independently. The hash is
+      // sine-based rather than modulo — plain modulo stepped through values too
+      // regularly and the arcs came out as a rosette instead of lightning.
+      const seed = boltSeed + a * 37.13;
+      const start = hash(seed, 1) * Math.PI * 2 + time / 1400;
+      const sweep = 0.7 + hash(seed, 2) * 1.0;
+      const bow = 1.1 + hash(seed, 3) * 0.28;
+
+      ctx.beginPath();
+      for (let s = 0; s <= ARC_SEGMENTS; s++) {
+        const t = s / ARC_SEGMENTS;
+        const angle = start + sweep * t;
+        // Bow outward in the middle, hug the body at both ends.
+        const swell = Math.sin(t * Math.PI);
+        const jitter = (hash(seed, s + 7) - 0.5) * radius * 0.55 * swell;
+        const wobble = (hash(seed, s + 31) - 0.5) * 0.22 * swell;
+        const r = radius * (1 + (bow - 1) * swell) + jitter;
+        const px = x + Math.cos(angle + wobble) * r;
+        const py = y + Math.sin(angle + wobble) * r;
+        if (s === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+
+      // Wide soft pass then a hot thin core, which is what makes a line read as
+      // a discharge rather than a scribble.
+      ctx.shadowBlur = radius * 0.7;
+      ctx.strokeStyle = "rgba(120, 210, 255, 0.55)";
+      ctx.lineWidth = 3.2;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(240, 252, 255, 0.95)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+
+    // A charged halo underneath so the super glows even between arcs.
+    const pulse = 0.55 + 0.45 * Math.sin(time / 110);
+    const halo = ctx.createRadialGradient(x, y, radius * 0.8, x, y, radius * 2.1);
+    halo.addColorStop(0, `rgba(150, 225, 255, ${0.3 * pulse})`);
+    halo.addColorStop(1, "rgba(150, 225, 255, 0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 2.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   function drawCreature(entity, anim, colors, isLeader, time, seconds, meta = NO_META) {
     const speed = Math.hypot(entity.vx || 0, entity.vy || 0);
@@ -2072,11 +2145,17 @@
     ctx.fill();
     ctx.restore();
 
+    // A caught leader is out of the round: dimmed to a husk so the survivors
+    // can see at a glance how much of the field is left.
+    if (meta.out) {
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+    }
+
     const base = isLeader ? colors.leader : colors.underling;
-    // The shell's plates ARE the snack meter — a loaded player is readable at a
-    // glance with no HUD element, which is the whole point of putting the number
-    // on the creature.
-    const shell = shellSprite(base, isLeader, meta.snack, meta.apex);
+    // The shell's plates ARE the progress meter — how close someone is to
+    // turning super is readable off their body, with no HUD element.
+    const shell = shellSprite(base, isLeader, meta.eaten, meta.super);
     const orb = orbSprite(base, isLeader);
     const half = shell.width / 2;
     const k = radius / SPRITE_BAKE_RADIUS;
@@ -2160,6 +2239,14 @@
     ctx.arc(ex - eyeR * 0.34, ey - eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+
+    // Electricity goes on last, over everything, so the super reads as charged
+    // rather than merely decorated.
+    if (meta.super) {
+      drawElectricity(entity.x, entity.y, radius * 1.12, base, time);
+    }
+
+    if (meta.out) ctx.restore();
   }
 
   function drawEntities(state) {
@@ -2195,20 +2282,10 @@
       const anim = animFor(player.leader.id);
       anim.pop *= 0.82;
       drawCreature(player.leader, anim, colors, true, time, seconds, {
-        snack: player.snack | 0,
-        apex: !!player.isApex,
-        protected: !!player.isProtected,
+        eaten: player.eaten | 0,
+        super: !!player.isSuper,
+        out: !!player.isOut,
       });
-    }
-
-    // Neutral food. Grey rather than any team colour, so "unclaimed" reads
-    // instantly against eight coloured rosters.
-    for (const food of state.neutralUnderlings || []) {
-      seen.add(food.id);
-      trackUnderling(food, NEUTRAL_COLORS.underling);
-      const anim = animFor(food.id);
-      anim.pop *= 0.86;
-      drawCreature(food, anim, NEUTRAL_COLORS, false, time, seconds);
     }
 
     detectEatBursts(state);
@@ -2224,55 +2301,6 @@
   }
 
   let lastCreatureFrame = performance.now();
-
-  // ---- Bank zones ---------------------------------------------------------
-  //
-  // Drawn under the creatures, in world space. Your own zone is picked out
-  // brighter than everyone else's, and the ring fills while you are mid-bank so
-  // the commitment is legible to you and to whoever is running at you.
-  function drawBankZones(state) {
-    if (!bankZones.length) return;
-    const progressById = new Map(
-      (state?.players ?? []).map((p) => [p.connectionId, p.bankProgress || 0]),
-    );
-
-    for (const zone of bankZones) {
-      const mine = zone.ownerId === myPlayerId;
-      const shared = !zone.ownerId;
-      const colors = shared ? NEUTRAL_COLORS : paletteFor(zone.colorKey);
-      const tint = colors.leader;
-
-      ctx.save();
-      ctx.globalAlpha = mine || shared ? 0.16 : 0.08;
-      ctx.fillStyle = tint;
-      ctx.beginPath();
-      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.globalAlpha = mine || shared ? 0.75 : 0.35;
-      ctx.strokeStyle = tint;
-      ctx.lineWidth = mine || shared ? 3 : 2;
-      ctx.setLineDash([14, 10]);
-      ctx.beginPath();
-      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Banking commitment, as an arc closing around the zone.
-      const progress = shared
-        ? Math.max(0, ...[...progressById.values()])
-        : (progressById.get(zone.ownerId) || 0);
-      if (progress > 0) {
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = shade(tint, 0.5);
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.arc(zone.x, zone.y, zone.radius - 6, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-  }
 
   function onScreen(x, y) {
     return x >= camera.x && x <= camera.x + canvasWidth
@@ -2448,25 +2476,24 @@
       rebuildAvatars(players);
     }
 
-    // The badge now shows banked score — the thing the match is actually a race
-    // for — and the chip lights up when that player is carrying, so the table
-    // tells you both who is winning and who is worth hunting.
+    // While gathering the badge counts progress toward turning super; once the
+    // hunt is on it marks who is hunting and who has been caught.
     const byId = new Map(players.map((p) => [p.connectionId, p]));
 
     for (const [id, el] of avatarEls) {
       const micOn = VoiceClient.isMicOn(id);
       const speaking = VoiceClient.isSpeaking(id);
       const p = byId.get(id);
-      const banked = p?.banked ?? 0;
-      const snack = p?.snack ?? 0;
-      const apex = !!p?.isApex;
-      const stamp = `${banked}|${snack}|${apex}`;
+      const eaten = p?.eaten ?? 0;
+      const isSuper = !!p?.isSuper;
+      const isOut = !!p?.isOut;
+      const stamp = `${eaten}|${isSuper}|${isOut}`;
       if (el.score && el.wrap._stamp !== stamp) {
         el.wrap._stamp = stamp;
-        el.score.textContent = String(banked);
-        el.wrap.classList.toggle("loaded", snack > 0 && !apex);
-        el.wrap.classList.toggle("apex", apex);
-        el.wrap.dataset.snack = snack > 0 ? String(snack) : "";
+        el.score.textContent = isSuper ? "⚡" : isOut ? "✕" : String(eaten);
+        el.wrap.classList.toggle("apex", isSuper);
+        el.wrap.classList.toggle("eliminated", isOut);
+        el.wrap.dataset.snack = "";
       }
       if (el.wrap._micOn !== micOn) {
         el.wrap._micOn = micOn;
@@ -2863,16 +2890,60 @@
   }
 
   let lastClockText = null;
+  let lastPhaseKey = null;
 
+  // The clock only means something during a hunt; gathering has no deadline.
   function updateMatchClock(state) {
     if (!matchClockEl) return;
-    const left = Math.max(0, Math.ceil(state.secondsRemaining ?? 0));
-    const text = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    const hunting = state.phase === "hunting";
+    const left = Math.max(0, Math.ceil(state.huntSecondsRemaining ?? 0));
+    const text = hunting ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "";
     if (text !== lastClockText) {
       lastClockText = text;
       matchClockEl.textContent = text;
-      matchClockEl.classList.toggle("urgent", left <= 30 && state.isActive);
+      matchClockEl.classList.toggle("urgent", hunting && left <= 20);
+      matchClockEl.style.display = hunting ? "block" : "none";
     }
+    updatePhaseBanner(state);
+  }
+
+  // One line telling you what the game currently wants from you. The rules
+  // change completely between phases, so this is not decoration.
+  function updatePhaseBanner(state) {
+    if (!phaseBannerEl) return;
+    if (!state.isActive) {
+      if (lastPhaseKey !== "off") { lastPhaseKey = "off"; phaseBannerEl.style.display = "none"; }
+      return;
+    }
+
+    const hunting = state.phase === "hunting";
+    const me = (state.players ?? []).find((p) => p.connectionId === myPlayerId);
+    const target = state.underlingsToBecomeSuper ?? 5;
+    const superPlayer = (state.players ?? []).find((p) => p.isSuper);
+
+    let text;
+    let mood;
+    if (!hunting) {
+      text = `EAT ${target} TO BECOME SUPER — YOU HAVE ${me?.eaten ?? 0}`;
+      mood = "gather";
+    } else if (me?.isSuper) {
+      text = "YOU ARE SUPER — HUNT THEM DOWN";
+      mood = "super";
+    } else if (me?.isOut) {
+      text = "CAUGHT — WAIT FOR THE ROUND TO RESET";
+      mood = "out";
+    } else {
+      const name = superPlayer?.displayName || "SOMEONE";
+      text = `${name.toUpperCase()} IS SUPER — SURVIVE`;
+      mood = "hunted";
+    }
+
+    const key = `${text}|${mood}`;
+    if (key === lastPhaseKey) return;
+    lastPhaseKey = key;
+    phaseBannerEl.textContent = text;
+    phaseBannerEl.className = `phase-banner ${mood}`;
+    phaseBannerEl.style.display = "block";
   }
 
   function updateAudioButton() {

@@ -742,6 +742,38 @@
         overflow: visible;
       }
 
+      .phase-banner {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 0.4rem 1.1rem;
+        border-radius: 3px;
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 0.95rem;
+        font-weight: 700;
+        letter-spacing: 2px;
+        white-space: nowrap;
+        pointer-events: none;
+        background: rgba(5, 9, 18, 0.82);
+        border: 1px solid rgba(34, 211, 238, 0.5);
+        color: var(--accent);
+      }
+      .phase-banner.super {
+        border-color: #fff;
+        color: #fff;
+        background: rgba(30, 12, 60, 0.85);
+        animation: apexPulse 0.5s ease-in-out infinite alternate;
+      }
+      .phase-banner.hunted {
+        border-color: #f43f5e;
+        color: #fb7185;
+      }
+      .phase-banner.out {
+        border-color: #475569;
+        color: #94a3b8;
+      }
+
       .match-clock {
         display: none;
         font-family: 'Rajdhani', sans-serif;
@@ -904,6 +936,9 @@
              forced the whole page to scale down on a 768-tall laptop. -->
         <section class="game-area">
           <canvas id="gameCanvas" width="960" height="640"></canvas>
+          <!-- What the game wants from you right now. The rules change
+               completely between phases, so this is not decoration. -->
+          <div id="phaseBanner" class="phase-banner" style="display: none"></div>
           <canvas id="minimap" class="minimap" width="192" height="128"></canvas>
           <div id="overlay" class="overlay hidden">
             <div id="overlayMessage"></div>

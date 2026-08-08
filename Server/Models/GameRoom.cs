@@ -86,29 +86,22 @@ public class GameRoom
     public float EffectiveWorldWidth =>
         IsActive ? _frozenWorldWidth : Level.WorldWidthFor(_players.Count);
 
-    // ---- Snack economy ---------------------------------------------------
+    // ---- Two phases ------------------------------------------------------
 
-    /// <summary>
-    /// Food belonging to nobody. Underlings enter this pool when they respawn in
-    /// the midfield and when a loaded leader is caught and spills what it was
-    /// carrying, so a kill puts its bounty back on the table for everyone rather
-    /// than handing it to the killer.
-    /// </summary>
-    public List<Underling> NeutralUnderlings { get; } = new();
+    /// <summary>"gathering" while underlings are on the map, "hunting" once someone turns super.</summary>
+    public string Phase { get; set; } = GamePhase.Gathering;
 
-    /// <summary>Seconds of match left. Guarantees a match ends on the clock.</summary>
-    public float SecondsRemaining { get; set; }
+    /// <summary>Who is hunting. Null during gathering.</summary>
+    public string? SuperId { get; set; }
 
+    /// <summary>Seconds of hunt left. Survive it and the round resets.</summary>
+    public float HuntSecondsRemaining { get; set; }
 
-    /// <summary>Banked total that wins outright, fixed when the match starts.</summary>
-    public int WinThreshold { get; private set; }
+    /// <summary>Counts up so the client can announce each new round.</summary>
+    public int RoundNumber { get; set; }
 
-    /// <summary>
-    /// With four or fewer players everyone banks at home; above that the rooms
-    /// are too far apart for a bank to ever be contested, so it moves to one
-    /// shared zone in the middle.
-    /// </summary>
-    public bool SharedBank { get; private set; }
+    /// <summary>Everyone is untouchable for a moment after a hunt begins.</summary>
+    public float GraceSecondsRemaining { get; set; }
 
     public void Start()
     {
@@ -119,13 +112,15 @@ public class GameRoom
             WinnerId = null;
             WinnerBroadcasted = false;
             MatchEnded = false;
-            NeutralUnderlings.Clear();
-            SecondsRemaining = GameConstants.MatchDurationSeconds;
-            WinThreshold = GameConstants.WinThreshold(_players.Count);
-            SharedBank = _players.Count > GameConstants.HomeBankMaxPlayers;
+            Phase = GamePhase.Gathering;
+            SuperId = null;
+            HuntSecondsRemaining = 0f;
+            GraceSecondsRemaining = 0f;
+            RoundNumber = 1;
             foreach (var player in _players.Values)
             {
-                player.ResetEconomy();
+                player.ResetForRound();
+                player.Wins = 0;
                 // The swarm regrows back to what it started with, never beyond.
                 player.SwarmCapacity = player.Underlings.Count;
             }

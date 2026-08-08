@@ -13,25 +13,12 @@ public record GameStateDto(
     float WorldHeight,
     IReadOnlyCollection<RoomDto> Rooms,
     IReadOnlyCollection<ThicketDto> Thickets,
-    // ---- Snack economy ----
-    IReadOnlyCollection<EntityStateDto> NeutralUnderlings,
-    float SecondsRemaining,
-    int WinThreshold,
-    IReadOnlyCollection<BankZoneDto> BankZones
-);
-
-/// <summary>
-/// Where a leader can deliver what it is carrying. One zone per player's home
-/// room in a small match; a single shared zone in the contested middle once the
-/// room is big enough that nobody could ever contest a bank at your door.
-/// OwnerId is null for the shared zone.
-/// </summary>
-public record BankZoneDto(
-    string? OwnerId,
-    float X,
-    float Y,
-    float Radius,
-    string ColorKey
+    // ---- Two phases ----
+    string Phase,
+    string? SuperId,
+    float HuntSecondsRemaining,
+    int RoundNumber,
+    int UnderlingsToBecomeSuper
 );
 
 /// <summary>
@@ -73,16 +60,13 @@ public record PlayerStateDto(
     string TeamColor,
     EntityStateDto Leader,
     IReadOnlyCollection<EntityStateDto> Underlings,
-    // ---- Snack economy ----
-    // Snack is carried and at risk; Banked is delivered and safe. The client
-    // draws Snack on the creature itself so a loaded player is readable without
-    // anyone having to check a number.
-    int Snack,
-    int Banked,
-    bool IsApex,
-    float ApexSecondsLeft,
-    bool IsProtected,
-    float BankProgress
+    // ---- Round state ----
+    // Eaten is progress toward turning super, drawn on the creature itself so
+    // everyone can see who is close.
+    int Eaten,
+    bool IsSuper,
+    bool IsOut,
+    int Wins
 );
 
 public record EntityStateDto(

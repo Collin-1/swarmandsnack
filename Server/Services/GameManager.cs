@@ -403,217 +403,129 @@ public class GameManager
             ResolveThicketCollisions(player.Leader, thickets, bounce: false);
         }
 
-        UpdateApex(players, deltaSeconds);
-        ResolveApexKills(room, players);
-        UpdateBanking(room, players, deltaSeconds);
-        UpdateRegrowth(players, worldWidth, deltaSeconds);
+        if (room.Phase == GamePhase.Hunting)
+        {
+            UpdateHunt(room, players, deltaSeconds);
+        }
+        else
+        {
+            UpdateRegrowth(players, worldWidth, deltaSeconds);
+        }
 
-        room.SecondsRemaining = Math.Max(0f, room.SecondsRemaining - deltaSeconds);
-
-        CheckForWinner(room);
         room.Touch();
     }
 
-    /// <summary>Every underling in the room, owned or neutral.</summary>
-    private static IEnumerable<Underling> AllUnderlings(GameRoom room, IReadOnlyList<Player> players)
-        => players.SelectMany(p => p.Underlings).Concat(room.NeutralUnderlings);
-
-    private static void UpdateApex(IReadOnlyList<Player> players, float deltaSeconds)
-    {
-        foreach (var player in players)
-        {
-            if (player.ApexSecondsLeft > 0f)
-            {
-                player.ApexSecondsLeft = Math.Max(0f, player.ApexSecondsLeft - deltaSeconds);
-            }
-            if (player.ProtectedSecondsLeft > 0f)
-            {
-                player.ProtectedSecondsLeft = Math.Max(0f, player.ProtectedSecondsLeft - deltaSeconds);
-            }
-        }
-    }
-
     /// <summary>
-    /// An Apex leader eats other leaders. The victim is not eliminated — they
-    /// spill what they were carrying as neutral food and respawn at their own
-    /// room. That keeps the biggest moment in a match a scramble rather than a
-    /// coronation: the bounty goes back on the table for everyone, including the
-    /// player who just lost it. Banked score is never touched, because banking
-    /// has to mean something.
+    /// The hunt. Every underling has left the map, the super is faster than
+    /// everyone, and it is the only thing that can eat a leader. Catch them all
+    /// and the super takes the match; if anyone is still alive when the clock
+    /// runs out, the round resets and gathering starts again.
     /// </summary>
-    private void ResolveApexKills(GameRoom room, IReadOnlyList<Player> players)
+    private void UpdateHunt(GameRoom room, IReadOnlyList<Player> players, float deltaSeconds)
     {
-        foreach (var hunter in players)
+        if (room.GraceSecondsRemaining > 0f)
         {
-            if (!hunter.IsApex) continue;
-
-            foreach (var prey in players)
-            {
-                if (ReferenceEquals(prey, hunter)) continue;
-                // Two Apex leaders bounce off each other rather than trading
-                // kills on whichever tick happens to look first.
-                if (prey.IsApex) continue;
-                // Freshly respawned prey is untouchable, otherwise the kill
-                // re-fires every tick the pair overlaps and one Apex farms the
-                // same victim hundreds of times.
-                if (prey.IsProtected) continue;
-
-                var reach = hunter.Leader.Radius + prey.Leader.Radius + GameConstants.HitForgivenessRadius;
-                if (Vector2.DistanceSquared(hunter.Leader.Position, prey.Leader.Position) >= reach * reach)
-                {
-                    continue;
-                }
-
-                SpillSnack(room, prey);
-                prey.BankProgressSeconds = 0f;
-                prey.ProtectedSecondsLeft = GameConstants.RespawnProtectionSeconds;
-                RespawnLeaderAtHome(prey, room.EffectiveWorldWidth);
-                _logger.LogInformation(
-                    "Room {RoomId}: {Hunter} ate {Prey} while Apex", room.Id, hunter.ConnectionId, prey.ConnectionId);
-            }
+            // Nobody can be caught for a moment after the change, so a hunt
+            // never starts with the super already standing on somebody.
+            room.GraceSecondsRemaining = Math.Max(0f, room.GraceSecondsRemaining - deltaSeconds);
         }
-    }
-
-    /// <summary>
-    /// Every player can always attack. Two leaders touching makes whichever is
-    /// carrying more spill some of it on the floor for anyone to grab.
-    ///
-    /// Before this, leaders simply bounced off each other unless one was Apex,
-    /// which meant that for most of a match there was no way to attack anybody —
-    /// the whole point of a free-for-all. Now being loaded is a liability at all
-    /// times, and a player who is behind can bully the leader instead of farming.
-    /// </summary>
-    private void ResolveRam(GameRoom room, Player a, Player b)
-    {
-        // Apex handles its own, far more decisive, collision.
-        if (a.IsApex || b.IsApex) return;
-        if (a.Snack == b.Snack) return;
-
-        var loaded = a.Snack > b.Snack ? a : b;
-        if (loaded.IsProtected) return;
-
-        var spill = Math.Min(GameConstants.RamSpillAmount, loaded.Snack);
-        if (spill <= 0) return;
-
-        loaded.Snack -= spill;
-        loaded.BankProgressSeconds = 0f;
-        loaded.ProtectedSecondsLeft = GameConstants.RamCooldownSeconds;
-        ScatterFood(room, loaded.Leader.Position, spill);
-        _logger.LogInformation(
-            "Room {RoomId}: {Player} was rammed and dropped {Spill}", room.Id, loaded.ConnectionId, spill);
-    }
-
-    /// <summary>Turns a caught leader's belly into neutral food where it fell.</summary>
-    private static void SpillSnack(GameRoom room, Player victim)
-    {
-        var spill = victim.Snack;
-        victim.Snack = 0;
-        ScatterFood(room, victim.Leader.Position, spill);
-    }
-
-    /// <summary>Bursts dropped snack outward, so it reads as an explosion rather than a pile.</summary>
-    private static void ScatterFood(GameRoom room, Vector2 origin, int count)
-    {
-        for (var i = 0; i < count; i++)
+        else
         {
-            if (room.NeutralUnderlings.Count >= GameConstants.MaxNeutralUnderlings) break;
-            var direction = RandomUnitVector();
-            var position = origin + direction * RandomFloat(20f, 60f);
-            room.NeutralUnderlings.Add(new Underling(
-                NeutralOwnerId, ClampToWorld(position, room.EffectiveWorldWidth),
-                // Thrown clear, and briefly untouchable, so the drop is a prize
-                // on the floor rather than something the victim inhales again.
-                direction * GameConstants.SpillLaunchSpeed)
-            {
-                CoolSeconds = GameConstants.SpilledFoodCoolSeconds,
-            });
+            ResolveSuperCatches(room, players);
         }
-    }
 
-    private static void RespawnLeaderAtHome(Player player, float worldWidth)
-    {
-        var spawn = HomeOf(player);
-        player.Leader.Position = spawn;
-        player.Leader.Velocity = Vector2.Zero;
-    }
-
-    /// <summary>
-    /// Banking is a commitment. A leader has to hold its ground inside a bank
-    /// zone for a full second, and an enemy leader arriving spoils it — which is
-    /// what turns coming home with a full belly into the tensest moment in a
-    /// match instead of a formality.
-    /// </summary>
-    private void UpdateBanking(GameRoom room, IReadOnlyList<Player> players, float deltaSeconds)
-    {
-        foreach (var player in players)
+        var survivors = players.Count(p => !p.IsSuper && !p.IsOut);
+        if (survivors == 0)
         {
-            if (player.Snack <= 0 || !IsInsideBankZone(room, player))
+            var super = players.FirstOrDefault(p => p.IsSuper);
+            if (super is not null)
             {
-                player.BankProgressSeconds = 0f;
-                continue;
+                super.Wins++;
+                _logger.LogInformation("Room {RoomId}: {Super} caught everyone", room.Id, super.ConnectionId);
+                room.Stop(super.ConnectionId);
             }
+            return;
+        }
 
-            if (EnemyLeaderIsNear(player, players))
-            {
-                player.BankProgressSeconds = 0f;
-                continue;
-            }
-
-            player.BankProgressSeconds += deltaSeconds;
-            if (player.BankProgressSeconds < GameConstants.BankSecondsRequired)
-            {
-                continue;
-            }
-
-            player.Banked += player.Snack;
-            player.Snack = 0;
-            player.BankProgressSeconds = 0f;
+        room.HuntSecondsRemaining = Math.Max(0f, room.HuntSecondsRemaining - deltaSeconds);
+        if (room.HuntSecondsRemaining <= 0f)
+        {
             _logger.LogInformation(
-                "Room {RoomId}: {Player} banked, total {Banked}", room.Id, player.ConnectionId, player.Banked);
+                "Room {RoomId}: {Count} survived the hunt, resetting round", room.Id, survivors);
+            StartGathering(room, players);
         }
     }
 
-    private static bool IsInsideBankZone(GameRoom room, Player player)
+    /// <summary>The super eats leaders on contact. Everyone else just bumps.</summary>
+    private void ResolveSuperCatches(GameRoom room, IReadOnlyList<Player> players)
     {
-        if (room.SharedBank)
-        {
-            var centre = MidfieldCentre(room.EffectiveWorldWidth);
-            return Vector2.DistanceSquared(player.Leader.Position, centre)
-                <= GameConstants.SharedBankRadius * GameConstants.SharedBankRadius;
-        }
+        var super = players.FirstOrDefault(p => p.IsSuper);
+        if (super is null) return;
 
-        var home = HomeOf(player);
-        return Vector2.DistanceSquared(player.Leader.Position, home)
-            <= GameConstants.SharedBankRadius * GameConstants.SharedBankRadius;
-    }
-
-    private static bool EnemyLeaderIsNear(Player player, IReadOnlyList<Player> players)
-    {
-        foreach (var other in players)
+        foreach (var prey in players)
         {
-            if (ReferenceEquals(other, player)) continue;
-            if (Vector2.DistanceSquared(player.Leader.Position, other.Leader.Position)
-                <= GameConstants.BankInterruptRadius * GameConstants.BankInterruptRadius)
+            if (prey.IsSuper || prey.IsOut) continue;
+            var reach = super.Leader.Radius + prey.Leader.Radius + GameConstants.HitForgivenessRadius;
+            if (Vector2.DistanceSquared(super.Leader.Position, prey.Leader.Position) >= reach * reach)
             {
-                return true;
+                continue;
             }
+
+            prey.IsOut = true;
+            prey.Leader.Velocity = Vector2.Zero;
+            _logger.LogInformation("Room {RoomId}: {Super} caught {Prey}", room.Id, super.ConnectionId, prey.ConnectionId);
         }
-        return false;
     }
 
-    // The timed midfield food drop that used to live here is gone. It kept the
-    // map fed, but it also meant the safest way to play was to farm free dots in
-    // the middle and never go near another player — which designed the fight out
-    // of a game about raiding each other. Underlings now regrow for the player
-    // they were taken from instead, so all food belongs to somebody.
+    /// <summary>
+    /// Turns a player super: the map is swept of underlings and the clock starts.
+    /// This is the moment the game changes.
+    /// </summary>
+    private void BecomeSuper(GameRoom room, IReadOnlyList<Player> players, Player super)
+    {
+        room.Phase = GamePhase.Hunting;
+        room.SuperId = super.ConnectionId;
+        room.HuntSecondsRemaining = GameConstants.HuntDurationSeconds;
+        room.GraceSecondsRemaining = GameConstants.HuntStartGraceSeconds;
 
-    private const string NeutralOwnerId = "neutral";
+        foreach (var player in players)
+        {
+            player.IsSuper = ReferenceEquals(player, super);
+            player.IsOut = false;
+            // No more food: the hunt is only about leaders.
+            player.Underlings.Clear();
+            player.RegrowTimers.Clear();
+        }
 
-    /// <summary>The centre of a player's own room — their bank and respawn point.</summary>
+        _logger.LogInformation("Room {RoomId}: {Super} became super, hunt begins", room.Id, super.ConnectionId);
+    }
+
+    /// <summary>Back to gathering: everyone alive, swarms restored, counters cleared.</summary>
+    private static void StartGathering(GameRoom room, IReadOnlyList<Player> players)
+    {
+        room.Phase = GamePhase.Gathering;
+        room.SuperId = null;
+        room.HuntSecondsRemaining = 0f;
+        room.GraceSecondsRemaining = 0f;
+        room.RoundNumber++;
+
+        var worldWidth = room.EffectiveWorldWidth;
+        var sharedCount = Random.Shared.Next(
+            GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
+        foreach (var player in players)
+        {
+            player.ResetForRound();
+            InitializePlayerEntities(player, player.SpawnIndex, worldWidth, sharedCount);
+            player.SwarmCapacity = player.Underlings.Count;
+        }
+    }
+
+    /// <summary>Every underling in the room. All food belongs to a player now.</summary>
+    private static IEnumerable<Underling> AllUnderlings(GameRoom room, IReadOnlyList<Player> players)
+        => players.SelectMany(p => p.Underlings);
+
+    /// <summary>The centre of a player's own room — where they spawn and regrow.</summary>
     private static Vector2 HomeOf(Player player) => Level.SpawnPoints[player.SpawnIndex % Level.SpawnPoints.Count];
-
-    private static Vector2 MidfieldCentre(float worldWidth)
-        => new(worldWidth / 2f, GameConstants.WorldHeight / 2f);
 
     private static Vector2 ClampToWorld(Vector2 position, float worldWidth)
     {
@@ -908,12 +820,12 @@ public class GameManager
                     {
                         direction = new Vector2(1f, 0f);
                     }
+                    // Leaders just bump. The only thing that hurts a leader is
+                    // the super, and that is handled by the hunt.
                     first.Velocity = direction * GameConstants.LeaderSpeed;
                     second.Velocity = direction * -GameConstants.LeaderSpeed;
                     first.Position += direction * 4f;
                     second.Position -= direction * 4f;
-
-                    ResolveRam(room, players[i], players[j]);
                 }
             }
         }
@@ -923,6 +835,9 @@ public class GameManager
 
     private void ResolveLeaderUnderlingCollisions(IReadOnlyList<Player> players, GameRoom room)
     {
+        // Nothing to eat during a hunt — the map was swept when the game changed.
+        if (room.Phase != GamePhase.Gathering) return;
+
         foreach (var player in players)
         {
             foreach (var opponent in players.Where(p => p != player))
@@ -931,9 +846,12 @@ public class GameManager
                 // swarm recovers and stays worth raiding again later.
                 EatFrom(player, opponent.Underlings, room, opponent);
             }
-            // Loose food is only ever wreckage from a fight — what a caught
-            // leader spilled. Nothing arrives free.
-            EatFrom(player, room.NeutralUnderlings, room, null);
+
+            if (player.Eaten >= GameConstants.UnderlingsToBecomeSuper)
+            {
+                BecomeSuper(room, players, player);
+                return;
+            }
         }
     }
 
@@ -943,9 +861,6 @@ public class GameManager
         for (var i = food.Count - 1; i >= 0; i--)
         {
             var underling = food[i];
-            // Freshly spilled food is off the menu for a moment, so a rammed
-            // player cannot re-swallow its own drop before anyone can contest it.
-            if (underling.CoolSeconds > 0f) continue;
             var distanceSq = Vector2.DistanceSquared(leader.Position, underling.Position);
             // Extra buffer compensates for the leader's optimistic client position
             // lagging behind the server position by roughly one network round-trip.
@@ -956,7 +871,7 @@ public class GameManager
             }
 
             food.RemoveAt(i);
-            GainSnack(player);
+            player.Eaten++;
             victim?.RegrowTimers.Add(GameConstants.UnderlingRegrowSeconds);
 
             var pushDirection = (leader.Position - underling.Position).Normalized();
@@ -971,57 +886,6 @@ public class GameManager
         }
     }
 
-    /// <summary>
-    /// Filling the belly. Hitting the threshold transforms the leader for a
-    /// fixed window: it can eat other leaders and loses the carrying penalty, so
-    /// the payoff reads as both power and relief. The Snack stays on the books —
-    /// spending Apex hunting instead of banking means the window closes with a
-    /// full belly and no protection, which is the decision inside the reward.
-    /// </summary>
-    private static void GainSnack(Player player)
-    {
-        player.Snack++;
-        // Banking progress is lost by moving to eat, which stops a player
-        // nibbling one more while parked safely on their bank.
-        player.BankProgressSeconds = 0f;
-
-        if (player.Snack >= GameConstants.SnackForApex && !player.IsApex)
-        {
-            player.ApexSecondsLeft = GameConstants.ApexDurationSeconds;
-        }
-    }
-
-    /// <summary>
-    /// A score race, not a war of attrition. The old rule ended a match when at
-    /// most one player still had underlings, which meant the last minutes were
-    /// spent combing a 2880x1920 map for one randomly wandering token — the
-    /// tension collapsed exactly where it should have peaked. Banked score with a
-    /// hard clock cannot degenerate that way, and it inverts the endgame: the
-    /// leader is known, so everyone else has to take risks to catch them.
-    /// </summary>
-    private void CheckForWinner(GameRoom room)
-    {
-        var players = room.Players.ToList();
-        if (players.Count == 0)
-        {
-            return;
-        }
-
-        var leader = players.OrderByDescending(p => p.Banked).First();
-        var outright = leader.Banked >= room.WinThreshold;
-        var timeUp = room.SecondsRemaining <= 0f;
-        if (!outright && !timeUp)
-        {
-            return;
-        }
-
-        // On the clock a shared top score is a genuine draw.
-        var top = players.Max(p => p.Banked);
-        var leaders = players.Where(p => p.Banked == top).ToList();
-        var winnerId = leaders.Count == 1 && top > 0 ? leaders[0].ConnectionId : null;
-        room.Stop(winnerId);
-        _logger.LogInformation("Room {RoomId} match ended, winner {ConnectionId}", room.Id, winnerId ?? "(draw)");
-    }
 
     // Obstacle geometry is static for the whole app lifetime, so map both
     // variants (half world = rooms 1-4, full world = all 8) once.
@@ -1085,14 +949,10 @@ public class GameManager
                         u.Velocity.X,
                         u.Velocity.Y))
                     .ToList(),
-                player.Snack,
-                player.Banked,
-                player.IsApex,
-                player.ApexSecondsLeft,
-                player.IsProtected,
-                GameConstants.BankSecondsRequired <= 0f
-                    ? 0f
-                    : Math.Clamp(player.BankProgressSeconds / GameConstants.BankSecondsRequired, 0f, 1f)))
+                player.Eaten,
+                player.IsSuper,
+                player.IsOut,
+                player.Wins))
             .ToList();
 
         var worldWidth = room.EffectiveWorldWidth;
@@ -1101,39 +961,11 @@ public class GameManager
         var rooms = half ? HalfWorldRoomDtos : FullWorldRoomDtos;
         var thickets = half ? HalfWorldThicketDtos : FullWorldThicketDtos;
 
-        var neutral = room.NeutralUnderlings
-            .Select(u => new EntityStateDto(
-                u.Id.ToString(), u.OwnerId, u.Position.X, u.Position.Y, u.Radius,
-                "neutral", "underling", u.Velocity.X, u.Velocity.Y))
-            .ToList();
-
         return new GameStateDto(
             room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId,
             room.HostId, obstacles, worldWidth, GameConstants.WorldHeight, rooms, thickets,
-            neutral, room.SecondsRemaining, room.WinThreshold, BuildBankZones(room, worldWidth));
-    }
-
-    private static IReadOnlyCollection<BankZoneDto> BuildBankZones(GameRoom room, float worldWidth)
-    {
-        if (!room.IsActive)
-        {
-            return Array.Empty<BankZoneDto>();
-        }
-
-        if (room.SharedBank)
-        {
-            var centre = MidfieldCentre(worldWidth);
-            return new[] { new BankZoneDto(null, centre.X, centre.Y, GameConstants.SharedBankRadius, "neutral") };
-        }
-
-        return room.Players
-            .OrderBy(p => p.SpawnIndex)
-            .Select(p =>
-            {
-                var home = HomeOf(p);
-                return new BankZoneDto(p.ConnectionId, home.X, home.Y, GameConstants.SharedBankRadius, p.TeamColor);
-            })
-            .ToList();
+            room.Phase, room.SuperId, room.HuntSecondsRemaining, room.RoundNumber,
+            GameConstants.UnderlingsToBecomeSuper);
     }
 
     private static string GenerateRoomId()

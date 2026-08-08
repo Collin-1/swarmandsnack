@@ -29,94 +29,50 @@ public static class GameConstants
     public const int MinPlayersPerRoom = 2;
     public const int MaxPlayersPerRoom = 8;
 
-    // ---- Snack economy ---------------------------------------------------
+    // ---- Two phases ------------------------------------------------------
     //
-    // One number does three jobs. Snack is what a leader has eaten and not yet
-    // banked: it is score-in-waiting, it is the charge toward Apex, and it is
-    // the bounty another player collects by catching you. Because it is one
-    // number, every decision is the same fork — cash out, or push your luck.
+    // GATHERING: underlings are on the map and everyone races to eat them.
+    // HUNTING:   the first player to eat enough turns SUPER. Every underling
+    //            leaves the map and the super has two minutes to catch the other
+    //            leaders. Catch them all and the super wins the match; if anyone
+    //            is still alive when the clock runs out, the round resets and
+    //            gathering starts again.
+    //
+    // The whole game is those two states and the moment between them.
 
-    public const int SnackForApex = 5;
-    public const float ApexDurationSeconds = 12f;
+    /// <summary>Underlings one player must eat to trigger the hunt.</summary>
+    public const int UnderlingsToBecomeSuper = 5;
 
-    // Apex has to be faster than an empty leader or it cannot hunt at all.
-    // Measured: at parity an Apex chased a fleeing opponent for a full window
-    // and never closed, because "escape" was just holding one direction. The
-    // edge is deliberately small — enough that fleeing in a straight line loses,
+    public const float HuntDurationSeconds = 120f;
+
+    // The super has to be faster than the people running from it or it cannot
+    // hunt at all. Measured on the previous design: at parity a hunter chased a
+    // fleeing opponent for a full window and never closed, because escaping was
+    // just holding one direction. Enough that running in a straight line loses,
     // little enough that doors, thickets and corners still save you.
-    public const float ApexSpeedMultiplier = 1.15f;
+    public const float SuperSpeedMultiplier = 1.18f;
 
-    // Being eaten has to leave you briefly untouchable. Without it the kill
-    // re-fires on every tick the two leaders overlap: one Apex farmed a single
-    // victim 255 times in one window, because respawning put the prey back in
-    // reach of a hunter that was still chasing.
-    public const float RespawnProtectionSeconds = 2.5f;
+    // A caught leader is out for the rest of the round, but the round begins
+    // with everyone briefly untouchable so the hunt cannot start on top of
+    // somebody. On the previous design a kill with no such guard re-fired every
+    // tick the leaders overlapped, 255 times in one window.
+    public const float HuntStartGraceSeconds = 3f;
 
-    // Carrying is slow. This is the pressure that stops a player quietly
-    // accumulating to Apex in a corner, and it is why holding 4 is the
-    // frightening part. Apex clears the penalty entirely, so the transformation
-    // reads as relief as well as power.
-    public const float SnackSpeedPenaltyPerUnit = 0.025f;
-
-    // Banking is a commitment, not a touch. Reaching home with a full belly
-    // should be a climax, so it takes a moment and an enemy leader can spoil it.
-    public const float BankSecondsRequired = 1f;
-    public const float BankInterruptRadius = 90f;
-
-    // There is no free food. Every snack has to be taken off another player.
-    //
-    // A timed midfield drop was tried and removed: it meant the safest strategy
-    // was to farm neutral dots in the middle and avoid everyone, which designed
-    // the conflict out of a game that is supposed to be about raiding each other.
-    // Eaten underlings instead regrow for their owner, back at their own room, so
-    // raiding is repeatable, nobody is permanently crippled, and a raided player
-    // has to go and collect their swarm again.
-    public const float UnderlingRegrowSeconds = 8f;
-
-    // Loose food exists only as the wreckage of a fight — what a caught leader
-    // spilled. It is a prize on the floor, never a resource that arrives free.
-    public const int MaxNeutralUnderlings = 24;
-
-    // Swarms follow their owner, which is what makes a swarm a place you can
-    // raid rather than scattered dots with no defender. The leash is deliberately
-    // loose so the escort trails and spreads instead of clumping on one point.
+    // Underlings escort their owner, which is what makes a swarm something you
+    // raid rather than scattered dots with no defender. The leash is loose so
+    // the escort trails and spreads instead of clumping on one point.
     public const float UnderlingFollowRadius = 190f;
     public const float UnderlingLeashRadius = 340f;
-    // A follower that has been beyond the leash this long is walked back to the
-    // swarm. Steering straight at the owner presses a follower into whatever
-    // wall is between them and holds it there — one was measured stranded 1198px
-    // away against a 340px leash.
+    // A follower beyond the leash this long is walked back to the swarm.
+    // Steering straight at the owner presses a follower into whatever wall is
+    // between them and holds it there — one was measured stranded 1198px away
+    // against a 340px leash.
     public const float UnderlingLostSeconds = 6f;
 
-    // Ramming. Every player can always attack: touch an enemy leader and
-    // whichever of you is carrying more spills some of it. That keeps a loaded
-    // player worth hunting all the time instead of only inside someone's Apex.
-    public const int RamSpillAmount = 2;
-    public const float RamCooldownSeconds = 1.5f;
-
-    // Spilled food is briefly untouchable and thrown clear. Without this the
-    // victim simply re-swallowed its own drop the instant it hit the floor —
-    // measured a ram taking two and the same player eating both back before the
-    // attacker could move — which made attacking pointless.
-    public const float SpilledFoodCoolSeconds = 1.6f;
-    public const float SpillLaunchSpeed = 260f;
-
-    // With four or fewer players each player banks in their own room, which is
-    // where the interrupt drama lives. Above that the rooms are too far apart
-    // for anyone to ever be at your door, so banking moves to one shared zone in
-    // the contested middle and scoring means walking into danger instead of away
-    // from it.
-    public const int HomeBankMaxPlayers = 4;
-    public const float SharedBankRadius = 200f;
-
-    public const float MatchDurationSeconds = 360f; // 6 minutes
-
-    /// <summary>
-    /// Banked total needed to win outright. More players chasing the same food
-    /// makes every bank harder to complete, so the bar comes down as the room
-    /// fills; otherwise a big match could only ever be decided on the clock.
-    /// </summary>
-    public static int WinThreshold(int playerCount) => playerCount <= HomeBankMaxPlayers ? 12 : 9;
+    // Eaten underlings regrow for the player they were taken from, at that
+    // player's own room, so raiding stays worth doing and nobody is permanently
+    // crippled — but being raided costs you the walk to collect them again.
+    public const float UnderlingRegrowSeconds = 8f;
 
     // Colour keys assigned to players in join order. The client maps these keys to
     // actual render colours, so this list only needs to stay in sync with the client palette.
