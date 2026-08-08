@@ -709,11 +709,55 @@
         line-height: 1.1;
         text-align: center;
       }
-      .avatar.eliminated {
-        opacity: 0.4;
+      /* Carrying: the chip warns the room that this player is worth hunting.
+         The number shown is banked score; the pip is what they're carrying. */
+      .avatar.loaded .avatar-disc {
+        box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.9), 0 0 14px rgba(251, 191, 36, 0.6);
       }
-      .avatar.eliminated .avatar-score {
-        color: #64748b !important;
+      .avatar.apex .avatar-disc {
+        box-shadow: 0 0 0 2px #fff, 0 0 20px rgba(255, 255, 255, 0.9);
+        animation: apexPulse 0.6s ease-in-out infinite alternate;
+      }
+      @keyframes apexPulse {
+        from { transform: scale(1); }
+        to { transform: scale(1.12); }
+      }
+      .avatar[data-snack]:not([data-snack=""]) .avatar-disc::after {
+        content: attr(data-snack);
+        position: absolute;
+        left: -6px;
+        top: -5px;
+        min-width: 15px;
+        padding: 0 3px;
+        border-radius: 8px;
+        background: #fbbf24;
+        color: #1c1207;
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 0.66rem;
+        font-weight: 700;
+        line-height: 1.25;
+        text-align: center;
+      }
+      .avatar[data-snack]:not([data-snack=""]) .avatar-disc {
+        overflow: visible;
+      }
+
+      .match-clock {
+        display: none;
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: var(--accent);
+        min-width: 3.4rem;
+        text-align: center;
+      }
+      .match-clock.urgent {
+        color: #f43f5e;
+        animation: apexPulse 0.5s ease-in-out infinite alternate;
+      }
+      body.is-playing .match-clock {
+        display: block;
       }
 
       /* ---- Match mode: the setup panel gets out of the way ----------------
@@ -837,6 +881,7 @@
           <div class="voice-controls">
             <!-- Only shown mid-match, when the setup panel is collapsed: keeps
                  the room code reachable and lets the panel be summoned back. -->
+            <div id="matchClock" class="match-clock" title="Time remaining">6:00</div>
             <button id="panelToggle" class="mic-btn panel-toggle" type="button"
                     title="Show room details">
               <span id="panelToggleCode">ROOM</span>

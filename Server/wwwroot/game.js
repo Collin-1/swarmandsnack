@@ -16,6 +16,8 @@
     fuchsia: { leader: "#e879f9", underling: "#f0abfc" },
   };
   const DEFAULT_COLORS = { leader: "#94a3b8", underling: "#cbd5e1" };
+  // Unclaimed food. Deliberately colourless so it never reads as a team's.
+  const NEUTRAL_COLORS = { leader: "#94a3b8", underling: "#e2e8f0" };
   function paletteFor(teamColor) {
     return PLAYER_PALETTE[teamColor] || DEFAULT_COLORS;
   }
@@ -58,6 +60,7 @@
   const panelToggle = document.getElementById("panelToggle");
   const panelToggleCodeEl = document.getElementById("panelToggleCode");
   const minimapCanvas = document.getElementById("minimap");
+  const matchClockEl = document.getElementById("matchClock");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -68,6 +71,7 @@
   let worldHeight = canvasHeight;
   let worldRooms = [];
   let worldThickets = [];
+  let bankZones = [];
   const camera = { x: 0, y: 0 };
 
   let connection;
@@ -301,6 +305,9 @@
       if (typeof payload.worldHeight === "number") worldHeight = payload.worldHeight;
       if (Array.isArray(payload.rooms)) worldRooms = payload.rooms;
       if (Array.isArray(payload.thickets)) worldThickets = payload.thickets;
+      // Bank zones are static for a match but arrive with the snapshot, so the
+      // static layer is rebuilt when they first appear or the set changes.
+      if (Array.isArray(payload.bankZones)) bankZones = payload.bankZones;
 
       // The snapshot roster is the authoritative "who is in this room" list, in
       // the lobby and mid-match alike, so voice peering follows it.
@@ -621,6 +628,7 @@
     const inLobby = !state.isActive && !state.winnerId;
 
     setPlayingLayout(!!state.isActive);
+    updateMatchClock(state);
 
     // Music follows the room state. The victory sting is started by the
     // GameOver handler instead, so don't tread on it while a winner stands.
@@ -1485,6 +1493,7 @@
 
     ctx.save();
     ctx.translate(-camera.x, -camera.y);
+    drawBankZones(renderState);
     drawEntities(renderState);
     ctx.restore();
 
@@ -1821,6 +1830,7 @@
   const SPRITE_BAKE_RADIUS = 48; // generous, so downscaling to 12-24px stays crisp
   const SPRITE_GLOW_SCALE = 1.7;
   const ORB_RATIO = 0.74;        // orb sits nested inside the shell ring
+  const SNACK_FOR_APEX = 5;      // must match GameConstants.SnackForApex
   const creatureSprites = new Map();
 
   function hexToRgb(hex) {
@@ -1916,8 +1926,11 @@
   // reads as a different player. The forward slot is instead brightened toward
   // white, which gives the same two-tone look and still marks which way the
   // creature is pointing.
-  function shellSprite(base, isLeader) {
-    const key = `shell|${base}|${isLeader ? "L" : "U"}`;
+  function shellSprite(base, isLeader, snack = 0, apex = false) {
+    // One bake per appearance. Eight colours times six snack levels plus an Apex
+    // form is a few dozen canvases for the whole game, and a frame stays a blit.
+    const level = Math.max(0, Math.min(SNACK_FOR_APEX, snack | 0));
+    const key = `shell|${base}|${isLeader ? "L" : "U"}|${apex ? "A" : level}`;
     const cached = creatureSprites.get(key);
     if (cached) return cached;
 
@@ -1929,9 +1942,13 @@
     const thickness = outer - inner;
 
     // Emissive bloom goes down first, so it haloes the whole creature from
-    // behind instead of painting over the plates.
+    // behind instead of painting over the plates. It swells with a full belly
+    // and floods on Apex — a loaded player should be visible before you can
+    // count their plates.
+    const load = apex ? 1 : level / SNACK_FOR_APEX;
     const glow = g.createRadialGradient(0, 0, R * 0.8, 0, 0, R * SPRITE_GLOW_SCALE);
-    glow.addColorStop(0, rgba(base, isLeader ? 0.38 : 0.28));
+    glow.addColorStop(0, rgba(apex ? "#ffffff" : base,
+      (isLeader ? 0.38 : 0.28) + load * (apex ? 0.5 : 0.3)));
     glow.addColorStop(1, rgba(base, 0));
     g.fillStyle = glow;
     g.beginPath();
@@ -1949,14 +1966,28 @@
     g.lineWidth = thickness;
     for (let i = 0; i < plates; i++) {
       const centre = i * step;
+      // Plates charge anticlockwise from the front as the belly fills. On Apex
+      // every plate is lit, so the whole ring reads as a different creature.
+      const charged = apex || (isLeader && i < level);
       const plate = g.createLinearGradient(0, -outer, 0, outer);
-      plate.addColorStop(0, "#33425c");
-      plate.addColorStop(0.5, "#1d2942");
-      plate.addColorStop(1, "#0d1526");
+      if (charged) {
+        plate.addColorStop(0, shade(base, 0.5));
+        plate.addColorStop(0.5, base);
+        plate.addColorStop(1, shade(base, -0.2));
+      } else {
+        plate.addColorStop(0, "#33425c");
+        plate.addColorStop(0.5, "#1d2942");
+        plate.addColorStop(1, "#0d1526");
+      }
       g.strokeStyle = plate;
+      if (charged) {
+        g.shadowColor = rgba(base, 0.85);
+        g.shadowBlur = R * 0.22;
+      }
       g.beginPath();
       g.arc(0, 0, mid, centre - step / 2 + gap / 2, centre + step / 2 - gap / 2);
       g.stroke();
+      g.shadowBlur = 0;
     }
 
     // Dark seat under the orb so the plates read as sitting behind it.
@@ -1999,7 +2030,9 @@
     return canvas;
   }
 
-  function drawCreature(entity, anim, colors, isLeader, time, seconds) {
+  const NO_META = { snack: 0, apex: false, protected: false };
+
+  function drawCreature(entity, anim, colors, isLeader, time, seconds, meta = NO_META) {
     const speed = Math.hypot(entity.vx || 0, entity.vy || 0);
 
     // Ease the gaze toward travel so eyes swing rather than snap, and hold the
@@ -2040,7 +2073,10 @@
     ctx.restore();
 
     const base = isLeader ? colors.leader : colors.underling;
-    const shell = shellSprite(base, isLeader);
+    // The shell's plates ARE the snack meter — a loaded player is readable at a
+    // glance with no HUD element, which is the whole point of putting the number
+    // on the creature.
+    const shell = shellSprite(base, isLeader, meta.snack, meta.apex);
     const orb = orbSprite(base, isLeader);
     const half = shell.width / 2;
     const k = radius / SPRITE_BAKE_RADIUS;
@@ -2158,7 +2194,21 @@
       seen.add(player.leader.id);
       const anim = animFor(player.leader.id);
       anim.pop *= 0.82;
-      drawCreature(player.leader, anim, colors, true, time, seconds);
+      drawCreature(player.leader, anim, colors, true, time, seconds, {
+        snack: player.snack | 0,
+        apex: !!player.isApex,
+        protected: !!player.isProtected,
+      });
+    }
+
+    // Neutral food. Grey rather than any team colour, so "unclaimed" reads
+    // instantly against eight coloured rosters.
+    for (const food of state.neutralUnderlings || []) {
+      seen.add(food.id);
+      trackUnderling(food, NEUTRAL_COLORS.underling);
+      const anim = animFor(food.id);
+      anim.pop *= 0.86;
+      drawCreature(food, anim, NEUTRAL_COLORS, false, time, seconds);
     }
 
     detectEatBursts(state);
@@ -2174,6 +2224,55 @@
   }
 
   let lastCreatureFrame = performance.now();
+
+  // ---- Bank zones ---------------------------------------------------------
+  //
+  // Drawn under the creatures, in world space. Your own zone is picked out
+  // brighter than everyone else's, and the ring fills while you are mid-bank so
+  // the commitment is legible to you and to whoever is running at you.
+  function drawBankZones(state) {
+    if (!bankZones.length) return;
+    const progressById = new Map(
+      (state?.players ?? []).map((p) => [p.connectionId, p.bankProgress || 0]),
+    );
+
+    for (const zone of bankZones) {
+      const mine = zone.ownerId === myPlayerId;
+      const shared = !zone.ownerId;
+      const colors = shared ? NEUTRAL_COLORS : paletteFor(zone.colorKey);
+      const tint = colors.leader;
+
+      ctx.save();
+      ctx.globalAlpha = mine || shared ? 0.16 : 0.08;
+      ctx.fillStyle = tint;
+      ctx.beginPath();
+      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = mine || shared ? 0.75 : 0.35;
+      ctx.strokeStyle = tint;
+      ctx.lineWidth = mine || shared ? 3 : 2;
+      ctx.setLineDash([14, 10]);
+      ctx.beginPath();
+      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Banking commitment, as an arc closing around the zone.
+      const progress = shared
+        ? Math.max(0, ...[...progressById.values()])
+        : (progressById.get(zone.ownerId) || 0);
+      if (progress > 0) {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = shade(tint, 0.5);
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(zone.x, zone.y, zone.radius - 6, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
 
   function onScreen(x, y) {
     return x >= camera.x && x <= camera.x + canvasWidth
@@ -2349,16 +2448,25 @@
       rebuildAvatars(players);
     }
 
-    const counts = new Map(players.map((p) => [p.connectionId, p.underlings?.length ?? 0]));
+    // The badge now shows banked score — the thing the match is actually a race
+    // for — and the chip lights up when that player is carrying, so the table
+    // tells you both who is winning and who is worth hunting.
+    const byId = new Map(players.map((p) => [p.connectionId, p]));
 
     for (const [id, el] of avatarEls) {
       const micOn = VoiceClient.isMicOn(id);
       const speaking = VoiceClient.isSpeaking(id);
-      const count = counts.get(id);
-      if (el.score && el.wrap._count !== count) {
-        el.wrap._count = count;
-        el.score.textContent = count == null ? "" : String(count);
-        el.wrap.classList.toggle("eliminated", count === 0);
+      const p = byId.get(id);
+      const banked = p?.banked ?? 0;
+      const snack = p?.snack ?? 0;
+      const apex = !!p?.isApex;
+      const stamp = `${banked}|${snack}|${apex}`;
+      if (el.score && el.wrap._stamp !== stamp) {
+        el.wrap._stamp = stamp;
+        el.score.textContent = String(banked);
+        el.wrap.classList.toggle("loaded", snack > 0 && !apex);
+        el.wrap.classList.toggle("apex", apex);
+        el.wrap.dataset.snack = snack > 0 ? String(snack) : "";
       }
       if (el.wrap._micOn !== micOn) {
         el.wrap._micOn = micOn;
@@ -2752,6 +2860,19 @@
     panelToggle.addEventListener("click", () => {
       document.body.classList.toggle("panel-open");
     });
+  }
+
+  let lastClockText = null;
+
+  function updateMatchClock(state) {
+    if (!matchClockEl) return;
+    const left = Math.max(0, Math.ceil(state.secondsRemaining ?? 0));
+    const text = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    if (text !== lastClockText) {
+      lastClockText = text;
+      matchClockEl.textContent = text;
+      matchClockEl.classList.toggle("urgent", left <= 30 && state.isActive);
+    }
   }
 
   function updateAudioButton() {
