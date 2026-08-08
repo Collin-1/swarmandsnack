@@ -63,15 +63,43 @@ public static class GameConstants
     public const float BankSecondsRequired = 1f;
     public const float BankInterruptRadius = 90f;
 
-    // Food is conserved: nothing is destroyed by being banked, it re-enters the
-    // world in the contested middle. That keeps the map fed and makes the centre
-    // permanently worth fighting over.
-    public const float FoodRespawnIntervalSeconds = 15f;
-    public const int FoodRespawnBatchMin = 3;
-    public const int FoodRespawnBatchMax = 5;
+    // There is no free food. Every snack has to be taken off another player.
+    //
+    // A timed midfield drop was tried and removed: it meant the safest strategy
+    // was to farm neutral dots in the middle and avoid everyone, which designed
+    // the conflict out of a game that is supposed to be about raiding each other.
+    // Eaten underlings instead regrow for their owner, back at their own room, so
+    // raiding is repeatable, nobody is permanently crippled, and a raided player
+    // has to go and collect their swarm again.
+    public const float UnderlingRegrowSeconds = 8f;
+
+    // Loose food exists only as the wreckage of a fight — what a caught leader
+    // spilled. It is a prize on the floor, never a resource that arrives free.
     public const int MaxNeutralUnderlings = 24;
-    // Half the shorter world axis: wide enough to be a region, not a point.
-    public const float MidfieldRadius = 420f;
+
+    // Swarms follow their owner, which is what makes a swarm a place you can
+    // raid rather than scattered dots with no defender. The leash is deliberately
+    // loose so the escort trails and spreads instead of clumping on one point.
+    public const float UnderlingFollowRadius = 190f;
+    public const float UnderlingLeashRadius = 340f;
+    // A follower that has been beyond the leash this long is walked back to the
+    // swarm. Steering straight at the owner presses a follower into whatever
+    // wall is between them and holds it there — one was measured stranded 1198px
+    // away against a 340px leash.
+    public const float UnderlingLostSeconds = 6f;
+
+    // Ramming. Every player can always attack: touch an enemy leader and
+    // whichever of you is carrying more spills some of it. That keeps a loaded
+    // player worth hunting all the time instead of only inside someone's Apex.
+    public const int RamSpillAmount = 2;
+    public const float RamCooldownSeconds = 1.5f;
+
+    // Spilled food is briefly untouchable and thrown clear. Without this the
+    // victim simply re-swallowed its own drop the instant it hit the floor —
+    // measured a ram taking two and the same player eating both back before the
+    // attacker could move — which made attacking pointless.
+    public const float SpilledFoodCoolSeconds = 1.6f;
+    public const float SpillLaunchSpeed = 260f;
 
     // With four or fewer players each player banks in their own room, which is
     // where the interrupt drama lives. Above that the rooms are too far apart

@@ -40,6 +40,15 @@ public class Player
     /// <summary>Briefly untouchable after being eaten, so a kill can't re-fire every tick.</summary>
     public float ProtectedSecondsLeft { get; set; }
 
+    /// <summary>
+    /// Countdowns for underlings taken off this player. They regrow at the
+    /// owner's own room, so being raided costs you the walk to collect them.
+    /// </summary>
+    public List<float> RegrowTimers { get; } = new();
+
+    /// <summary>How many underlings this player started the match with.</summary>
+    public int SwarmCapacity { get; set; }
+
     public bool IsApex => ApexSecondsLeft > 0f;
     public bool IsProtected => ProtectedSecondsLeft > 0f;
 
@@ -59,6 +68,7 @@ public class Player
         ApexSecondsLeft = 0f;
         BankProgressSeconds = 0f;
         ProtectedSecondsLeft = 0f;
+        RegrowTimers.Clear();
     }
 
     public void UpdateInput(Direction direction)

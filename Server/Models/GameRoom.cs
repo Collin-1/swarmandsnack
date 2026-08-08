@@ -99,8 +99,6 @@ public class GameRoom
     /// <summary>Seconds of match left. Guarantees a match ends on the clock.</summary>
     public float SecondsRemaining { get; set; }
 
-    /// <summary>Counts down to the next midfield food drop.</summary>
-    public float FoodTimerSeconds { get; set; }
 
     /// <summary>Banked total that wins outright, fixed when the match starts.</summary>
     public int WinThreshold { get; private set; }
@@ -123,12 +121,13 @@ public class GameRoom
             MatchEnded = false;
             NeutralUnderlings.Clear();
             SecondsRemaining = GameConstants.MatchDurationSeconds;
-            FoodTimerSeconds = GameConstants.FoodRespawnIntervalSeconds;
             WinThreshold = GameConstants.WinThreshold(_players.Count);
             SharedBank = _players.Count > GameConstants.HomeBankMaxPlayers;
             foreach (var player in _players.Values)
             {
                 player.ResetEconomy();
+                // The swarm regrows back to what it started with, never beyond.
+                player.SwarmCapacity = player.Underlings.Count;
             }
             Touch();
         }

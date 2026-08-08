@@ -366,9 +366,11 @@ public class GameManager
             UpdateLeaderMovement(player);
         }
 
+        var ownerById = players.ToDictionary(p => p.ConnectionId);
         foreach (var underling in AllUnderlings(room, players))
         {
-            MaybeNudgeUnderling(underling);
+            ownerById.TryGetValue(underling.OwnerId, out var owner);
+            SteerUnderling(underling, owner, deltaSeconds);
             underling.Advance(deltaSeconds);
             BounceOffWalls(underling, worldWidth);
             ResolveObstacleCollisions(underling, obstacles, bounce: true);
@@ -404,7 +406,7 @@ public class GameManager
         UpdateApex(players, deltaSeconds);
         ResolveApexKills(room, players);
         UpdateBanking(room, players, deltaSeconds);
-        UpdateFoodSupply(room, worldWidth, deltaSeconds);
+        UpdateRegrowth(players, worldWidth, deltaSeconds);
 
         room.SecondsRemaining = Math.Max(0f, room.SecondsRemaining - deltaSeconds);
 
@@ -472,20 +474,59 @@ public class GameManager
         }
     }
 
+    /// <summary>
+    /// Every player can always attack. Two leaders touching makes whichever is
+    /// carrying more spill some of it on the floor for anyone to grab.
+    ///
+    /// Before this, leaders simply bounced off each other unless one was Apex,
+    /// which meant that for most of a match there was no way to attack anybody —
+    /// the whole point of a free-for-all. Now being loaded is a liability at all
+    /// times, and a player who is behind can bully the leader instead of farming.
+    /// </summary>
+    private void ResolveRam(GameRoom room, Player a, Player b)
+    {
+        // Apex handles its own, far more decisive, collision.
+        if (a.IsApex || b.IsApex) return;
+        if (a.Snack == b.Snack) return;
+
+        var loaded = a.Snack > b.Snack ? a : b;
+        if (loaded.IsProtected) return;
+
+        var spill = Math.Min(GameConstants.RamSpillAmount, loaded.Snack);
+        if (spill <= 0) return;
+
+        loaded.Snack -= spill;
+        loaded.BankProgressSeconds = 0f;
+        loaded.ProtectedSecondsLeft = GameConstants.RamCooldownSeconds;
+        ScatterFood(room, loaded.Leader.Position, spill);
+        _logger.LogInformation(
+            "Room {RoomId}: {Player} was rammed and dropped {Spill}", room.Id, loaded.ConnectionId, spill);
+    }
+
     /// <summary>Turns a caught leader's belly into neutral food where it fell.</summary>
     private static void SpillSnack(GameRoom room, Player victim)
     {
         var spill = victim.Snack;
         victim.Snack = 0;
-        for (var i = 0; i < spill; i++)
+        ScatterFood(room, victim.Leader.Position, spill);
+    }
+
+    /// <summary>Bursts dropped snack outward, so it reads as an explosion rather than a pile.</summary>
+    private static void ScatterFood(GameRoom room, Vector2 origin, int count)
+    {
+        for (var i = 0; i < count; i++)
         {
             if (room.NeutralUnderlings.Count >= GameConstants.MaxNeutralUnderlings) break;
-            // Burst outward so the drop reads as an explosion rather than a pile.
             var direction = RandomUnitVector();
-            var position = victim.Leader.Position + direction * RandomFloat(20f, 60f);
+            var position = origin + direction * RandomFloat(20f, 60f);
             room.NeutralUnderlings.Add(new Underling(
                 NeutralOwnerId, ClampToWorld(position, room.EffectiveWorldWidth),
-                direction * GameConstants.UnderlingSpeed));
+                // Thrown clear, and briefly untouchable, so the drop is a prize
+                // on the floor rather than something the victim inhales again.
+                direction * GameConstants.SpillLaunchSpeed)
+            {
+                CoolSeconds = GameConstants.SpilledFoodCoolSeconds,
+            });
         }
     }
 
@@ -560,30 +601,11 @@ public class GameManager
         return false;
     }
 
-    /// <summary>
-    /// Food is conserved. Banking removes an underling from the map but not from
-    /// the game: batches re-enter in the contested middle on a cycle, so the map
-    /// never starves and the centre is always worth holding.
-    /// </summary>
-    private static void UpdateFoodSupply(GameRoom room, float worldWidth, float deltaSeconds)
-    {
-        room.FoodTimerSeconds -= deltaSeconds;
-        if (room.FoodTimerSeconds > 0f) return;
-
-        room.FoodTimerSeconds = GameConstants.FoodRespawnIntervalSeconds;
-        var batch = Random.Shared.Next(GameConstants.FoodRespawnBatchMin, GameConstants.FoodRespawnBatchMax + 1);
-        var centre = MidfieldCentre(worldWidth);
-        var obstacles = Level.ObstaclesFor(worldWidth);
-        var thickets = Level.ThicketsFor(worldWidth);
-
-        for (var i = 0; i < batch; i++)
-        {
-            if (room.NeutralUnderlings.Count >= GameConstants.MaxNeutralUnderlings) break;
-            var position = FindFoodPosition(centre, worldWidth, obstacles, thickets);
-            room.NeutralUnderlings.Add(new Underling(
-                NeutralOwnerId, position, RandomUnitVector() * GameConstants.UnderlingSpeed));
-        }
-    }
+    // The timed midfield food drop that used to live here is gone. It kept the
+    // map fed, but it also meant the safest way to play was to farm free dots in
+    // the middle and never go near another player — which designed the fight out
+    // of a game about raiding each other. Underlings now regrow for the player
+    // they were taken from instead, so all food belongs to somebody.
 
     private const string NeutralOwnerId = "neutral";
 
@@ -599,21 +621,6 @@ public class GameManager
         return new Vector2(
             Math.Clamp(position.X, r, worldWidth - r),
             Math.Clamp(position.Y, r, GameConstants.WorldHeight - r));
-    }
-
-    private static Vector2 FindFoodPosition(
-        Vector2 centre, float worldWidth, IReadOnlyList<Obstacle> obstacles, IReadOnlyList<Thicket> thickets)
-    {
-        for (var attempt = 0; attempt < 40; attempt++)
-        {
-            var offset = RandomUnitVector() * RandomFloat(0f, GameConstants.MidfieldRadius);
-            var candidate = ClampToWorld(centre + offset, worldWidth);
-            if (IsClearOfTerrain(candidate, GameConstants.UnderlingRadius, obstacles, thickets))
-            {
-                return candidate;
-            }
-        }
-        return ClampToWorld(centre, worldWidth);
     }
 
     private static bool IsClearOfTerrain(
@@ -650,12 +657,97 @@ public class GameManager
         player.Leader.Velocity = desiredVelocity;
     }
 
-    private static void MaybeNudgeUnderling(Underling underling)
+    /// <summary>
+    /// Owned underlings keep station on their leader; loose ones drift.
+    ///
+    /// They used to random-walk with no idea who they belonged to, which meant a
+    /// "swarm" was just scattered dots and raiding somebody had no defender to
+    /// get past. Following turns a swarm into a place — you have to go into it
+    /// and come back out.
+    /// </summary>
+    private static void SteerUnderling(Underling underling, Player? owner, float deltaSeconds)
     {
-        if (Random.Shared.NextDouble() < 0.02)
+        if (owner is null)
         {
-            var direction = RandomUnitVector();
-            underling.Velocity = direction * GameConstants.UnderlingSpeed;
+            underling.LostSeconds = 0f;
+            if (underling.CoolSeconds > 0f)
+            {
+                // Still flying out of the spill; leave its launch velocity alone.
+                underling.CoolSeconds = Math.Max(0f, underling.CoolSeconds - deltaSeconds);
+                return;
+            }
+            // Settled loot: wander gently so a dropped pile spreads a little.
+            if (Random.Shared.NextDouble() < 0.02)
+            {
+                underling.Velocity = RandomUnitVector() * (GameConstants.UnderlingSpeed * 0.5f);
+            }
+            return;
+        }
+
+        var toOwner = owner.Leader.Position - underling.Position;
+        var distance = toOwner.Length;
+
+        if (distance > GameConstants.UnderlingLeashRadius)
+        {
+            underling.LostSeconds += deltaSeconds;
+            if (underling.LostSeconds >= GameConstants.UnderlingLostSeconds)
+            {
+                // Stranded. Steering straight at the owner walks a follower into
+                // whatever wall is between them and holds it there, so give up
+                // and put it back with the swarm.
+                underling.LostSeconds = 0f;
+                underling.Position = owner.Leader.Position + RandomUnitVector() * RandomFloat(40f, 110f);
+                underling.Velocity = RandomUnitVector() * GameConstants.UnderlingSpeed;
+                return;
+            }
+
+            // Head back, but angled rather than dead-on, so a follower slides
+            // along an obstacle instead of pressing into it.
+            var heading = toOwner.Normalized() * 0.8f + Perpendicular(toOwner).Normalized() * 0.2f;
+            underling.Velocity = heading.Normalized() * GameConstants.UnderlingSpeed;
+            return;
+        }
+
+        underling.LostSeconds = 0f;
+
+        if (distance > GameConstants.UnderlingFollowRadius)
+        {
+            // Drift back toward the owner, but keep some jitter so the escort
+            // spreads into a cloud instead of converging on one point.
+            var heading = toOwner.Normalized() * 0.75f + RandomUnitVector() * 0.25f;
+            underling.Velocity = heading.Normalized() * (GameConstants.UnderlingSpeed * 0.85f);
+            return;
+        }
+
+        // Inside the escort: mill around.
+        if (Random.Shared.NextDouble() < 0.04)
+        {
+            underling.Velocity = RandomUnitVector() * (GameConstants.UnderlingSpeed * 0.6f);
+        }
+    }
+
+    /// <summary>
+    /// Regrows underlings taken off a player, at that player's own room. The
+    /// swarm never shrinks permanently, so raiding stays worth doing all match,
+    /// but a raided player pays the walk to gather them up again.
+    /// </summary>
+    private static void UpdateRegrowth(IReadOnlyList<Player> players, float worldWidth, float deltaSeconds)
+    {
+        foreach (var player in players)
+        {
+            for (var i = player.RegrowTimers.Count - 1; i >= 0; i--)
+            {
+                player.RegrowTimers[i] -= deltaSeconds;
+                if (player.RegrowTimers[i] > 0f) continue;
+
+                player.RegrowTimers.RemoveAt(i);
+                if (player.Underlings.Count >= player.SwarmCapacity) continue;
+
+                var home = HomeOf(player);
+                var spawn = ClampToWorld(home + RandomUnitVector() * RandomFloat(30f, 110f), worldWidth);
+                player.Underlings.Add(new Underling(
+                    player.ConnectionId, spawn, RandomUnitVector() * GameConstants.UnderlingSpeed));
+            }
         }
     }
 
@@ -820,6 +912,8 @@ public class GameManager
                     second.Velocity = direction * -GameConstants.LeaderSpeed;
                     first.Position += direction * 4f;
                     second.Position -= direction * 4f;
+
+                    ResolveRam(room, players[i], players[j]);
                 }
             }
         }
@@ -833,21 +927,25 @@ public class GameManager
         {
             foreach (var opponent in players.Where(p => p != player))
             {
-                EatFrom(player, opponent.Underlings, room);
+                // Taking one off a player books it to regrow for them, so their
+                // swarm recovers and stays worth raiding again later.
+                EatFrom(player, opponent.Underlings, room, opponent);
             }
-            // Neutral food counts the same. It is the bulk of the economy after
-            // the opening minute, since everything banked or spilled re-enters
-            // the world unowned.
-            EatFrom(player, room.NeutralUnderlings, room);
+            // Loose food is only ever wreckage from a fight — what a caught
+            // leader spilled. Nothing arrives free.
+            EatFrom(player, room.NeutralUnderlings, room, null);
         }
     }
 
-    private static void EatFrom(Player player, List<Underling> food, GameRoom room)
+    private static void EatFrom(Player player, List<Underling> food, GameRoom room, Player? victim)
     {
         var leader = player.Leader;
         for (var i = food.Count - 1; i >= 0; i--)
         {
             var underling = food[i];
+            // Freshly spilled food is off the menu for a moment, so a rammed
+            // player cannot re-swallow its own drop before anyone can contest it.
+            if (underling.CoolSeconds > 0f) continue;
             var distanceSq = Vector2.DistanceSquared(leader.Position, underling.Position);
             // Extra buffer compensates for the leader's optimistic client position
             // lagging behind the server position by roughly one network round-trip.
@@ -859,6 +957,7 @@ public class GameManager
 
             food.RemoveAt(i);
             GainSnack(player);
+            victim?.RegrowTimers.Add(GameConstants.UnderlingRegrowSeconds);
 
             var pushDirection = (leader.Position - underling.Position).Normalized();
             if (pushDirection.LengthSquared == 0)
@@ -1048,6 +1147,9 @@ public class GameManager
             }
         });
     }
+
+    /// <summary>Rotated 90 degrees, used to slide along an obstacle instead of into it.</summary>
+    private static Vector2 Perpendicular(Vector2 v) => new(-v.Y, v.X);
 
     private static Vector2 RandomUnitVector()
     {
