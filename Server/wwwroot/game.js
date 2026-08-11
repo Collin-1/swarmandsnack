@@ -2026,7 +2026,7 @@
     return canvas;
   }
 
-  const NO_META = { eaten: 0, super: false, out: false };
+  const NO_META = { eaten: 0, super: false, dead: false };
 
   // ---- Electricity --------------------------------------------------------
   //
@@ -2147,7 +2147,7 @@
 
     // A caught leader is out of the round: dimmed to a husk so the survivors
     // can see at a glance how much of the field is left.
-    if (meta.out) {
+    if (meta.dead) {
       ctx.save();
       ctx.globalAlpha = 0.28;
     }
@@ -2246,7 +2246,7 @@
       drawElectricity(entity.x, entity.y, radius * 1.12, base, time);
     }
 
-    if (meta.out) ctx.restore();
+    if (meta.dead) ctx.restore();
   }
 
   function drawEntities(state) {
@@ -2284,7 +2284,7 @@
       drawCreature(player.leader, anim, colors, true, time, seconds, {
         eaten: player.eaten | 0,
         super: !!player.isSuper,
-        out: !!player.isOut,
+        dead: !!player.isDead,
       });
     }
 
@@ -2486,13 +2486,13 @@
       const p = byId.get(id);
       const eaten = p?.eaten ?? 0;
       const isSuper = !!p?.isSuper;
-      const isOut = !!p?.isOut;
-      const stamp = `${eaten}|${isSuper}|${isOut}`;
+      const isDead = !!p?.isDead;
+      const stamp = `${eaten}|${isSuper}|${isDead}`;
       if (el.score && el.wrap._stamp !== stamp) {
         el.wrap._stamp = stamp;
-        el.score.textContent = isSuper ? "⚡" : isOut ? "✕" : String(eaten);
+        el.score.textContent = isSuper ? "⚡" : isDead ? "✕" : String(eaten);
         el.wrap.classList.toggle("apex", isSuper);
-        el.wrap.classList.toggle("eliminated", isOut);
+        el.wrap.classList.toggle("eliminated", isDead);
         el.wrap.dataset.snack = "";
       }
       if (el.wrap._micOn !== micOn) {
@@ -2929,8 +2929,8 @@
     } else if (me?.isSuper) {
       text = "YOU ARE SUPER — HUNT THEM DOWN";
       mood = "super";
-    } else if (me?.isOut) {
-      text = "CAUGHT — WAIT FOR THE ROUND TO RESET";
+    } else if (me?.isDead) {
+      text = "CAUGHT — YOU ARE OUT OF THE MATCH";
       mood = "out";
     } else {
       const name = superPlayer?.displayName || "SOMEONE";

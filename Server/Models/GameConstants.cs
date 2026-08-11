@@ -58,21 +58,39 @@ public static class GameConstants
     // tick the leaders overlapped, 255 times in one window.
     public const float HuntStartGraceSeconds = 3f;
 
-    // Underlings escort their owner, which is what makes a swarm something you
-    // raid rather than scattered dots with no defender. The leash is loose so
-    // the escort trails and spreads instead of clumping on one point.
-    public const float UnderlingFollowRadius = 190f;
-    public const float UnderlingLeashRadius = 340f;
-    // A follower beyond the leash this long is walked back to the swarm.
-    // Steering straight at the owner presses a follower into whatever wall is
-    // between them and holds it there — one was measured stranded 1198px away
-    // against a 340px leash.
-    public const float UnderlingLostSeconds = 6f;
+    /// <summary>
+    /// Underlings per player, fixed. Nothing spawns mid-round and nothing
+    /// regrows: the map holds exactly what it started with, so gathering is a
+    /// race for a known, shrinking pool rather than a farm that refills.
+    ///
+    /// This must stay above <see cref="UnderlingsToBecomeSuper"/>. A player can
+    /// only eat other players' underlings, so in a two-player match the entire
+    /// reachable pool is one opponent's swarm — at four each against a threshold
+    /// of five, nobody could ever turn super and the round never ended.
+    /// </summary>
+    public const int UnderlingsPerPlayer = 6;
 
-    // Eaten underlings regrow for the player they were taken from, at that
-    // player's own room, so raiding stays worth doing and nobody is permanently
-    // crippled — but being raided costs you the walk to collect them again.
-    public const float UnderlingRegrowSeconds = 8f;
+    // Underlings are scattered across the whole map and stay scattered. They do
+    // not escort anyone — a swarm gathered around its owner is a swarm that can
+    // be cleared in one pass, which made catching them far too easy.
+    //
+    // Instead they run. A leader that could eat one is a threat it steers away
+    // from, so every underling is a small chase rather than a pickup.
+    public const float UnderlingFleeRadius = 210f;
+
+    // Fleeing has to be slow enough that a chase is winnable, and the ceiling is
+    // lower than it looks. Leaders move on four axes only; an underling flees
+    // along whatever angle points away. Chasing something diagonally, a leader's
+    // 160 is worth only 160/sqrt(2) = 113 of closing speed, so at a flee speed of
+    // 110 a diagonal chase closed at about 3px/s — measured, a chaser took
+    // ninety seconds to eat nothing, then three minutes to manage four.
+    //
+    // 85 leaves 28px/s in the worst case and 75px/s straight down an axis. Still
+    // evasive, and cornering one against a wall is now the skill.
+    public const float UnderlingFleeSpeed = 85f;
+
+    /// <summary>Idle wander. Slower than fleeing, so running away visibly reads as running away.</summary>
+    public const float UnderlingDriftSpeed = 55f;
 
     // Colour keys assigned to players in join order. The client maps these keys to
     // actual render colours, so this list only needs to stay in sync with the client palette.

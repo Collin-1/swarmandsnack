@@ -31,32 +31,28 @@ public class Player
     /// <summary>The hunter. Faster than everyone, and the only one who can eat a leader.</summary>
     public bool IsSuper { get; set; }
 
-    /// <summary>Caught by the super. Out until the round resets.</summary>
-    public bool IsOut { get; set; }
+    /// <summary>
+    /// Caught by a super. Dead for the rest of the match, not just the round —
+    /// only survivors come back for the next one, so the field narrows until one
+    /// player is left.
+    /// </summary>
+    public bool IsDead { get; set; }
 
     /// <summary>Rounds won by catching everyone before the clock ran out.</summary>
     public int Wins { get; set; }
-
-    /// <summary>
-    /// Countdowns for underlings taken off this player. They regrow at the
-    /// owner's own room, so being raided costs you the walk to collect them.
-    /// </summary>
-    public List<float> RegrowTimers { get; } = new();
-
-    /// <summary>How many underlings this player started the round with.</summary>
-    public int SwarmCapacity { get; set; }
 
     public float CurrentSpeed => IsSuper
         ? GameConstants.LeaderSpeed * GameConstants.SuperSpeedMultiplier
         : GameConstants.LeaderSpeed;
 
-    /// <summary>Clears everything that only lasts a round. Wins survive.</summary>
+    /// <summary>
+    /// Clears what only lasts a round. Death is deliberately not cleared here —
+    /// being caught puts you out of the match, not just the round.
+    /// </summary>
     public void ResetForRound()
     {
         Eaten = 0;
         IsSuper = false;
-        IsOut = false;
-        RegrowTimers.Clear();
     }
 
     public void UpdateInput(Direction direction)

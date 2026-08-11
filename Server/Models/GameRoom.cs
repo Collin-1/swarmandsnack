@@ -121,8 +121,8 @@ public class GameRoom
             {
                 player.ResetForRound();
                 player.Wins = 0;
-                // The swarm regrows back to what it started with, never beyond.
-                player.SwarmCapacity = player.Underlings.Count;
+                // A fresh match brings everyone back; only rounds are unforgiving.
+                player.IsDead = false;
             }
             Touch();
         }
