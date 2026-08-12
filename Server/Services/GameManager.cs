@@ -235,7 +235,14 @@ public class GameManager
     // can clear a swarm in the opening seconds just by standing still.
     private const float ScatterClearanceFromSpawns = 200f;
 
-    private static void InitializePlayerEntities(Player player, int spawnIndex, float worldWidth, int underlingCount = 0)
+    /// <summary>
+    /// Always the same number, for every player, in every round of every match.
+    /// The count used to be a random 3-5 rolled per match, which meant no two
+    /// games started from the same board.
+    /// </summary>
+    private static void InitializePlayerEntities(
+        Player player, int spawnIndex, float worldWidth,
+        int underlingCount = GameConstants.UnderlingsPerPlayer)
     {
         // The leader starts in its own room; the swarm is scattered across the
         // whole open world instead of huddling around it, so a swarm can't be
@@ -246,9 +253,7 @@ public class GameManager
         player.Underlings.Clear();
 
         var obstacles = Level.ObstaclesFor(worldWidth);
-        var count = underlingCount > 0
-            ? underlingCount
-            : Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
+        var count = underlingCount > 0 ? underlingCount : GameConstants.UnderlingsPerPlayer;
         for (var i = 0; i < count; i++)
         {
             var position = FindScatterPosition(worldWidth, obstacles, spawn);

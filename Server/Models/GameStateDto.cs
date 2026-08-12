@@ -65,7 +65,7 @@ public record PlayerStateDto(
     // everyone can see who is close.
     int Eaten,
     bool IsSuper,
-    bool IsOut,
+    bool IsDead,
     int Wins
 );
 
