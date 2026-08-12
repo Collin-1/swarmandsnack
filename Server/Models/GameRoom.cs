@@ -86,6 +86,23 @@ public class GameRoom
     public float EffectiveWorldWidth =>
         IsActive ? _frozenWorldWidth : Level.WorldWidthFor(_players.Count);
 
+    // ---- Two phases ------------------------------------------------------
+
+    /// <summary>"gathering" while underlings are on the map, "hunting" once someone turns super.</summary>
+    public string Phase { get; set; } = GamePhase.Gathering;
+
+    /// <summary>Who is hunting. Null during gathering.</summary>
+    public string? SuperId { get; set; }
+
+    /// <summary>Seconds of hunt left. Survive it and the round resets.</summary>
+    public float HuntSecondsRemaining { get; set; }
+
+    /// <summary>Counts up so the client can announce each new round.</summary>
+    public int RoundNumber { get; set; }
+
+    /// <summary>Everyone is untouchable for a moment after a hunt begins.</summary>
+    public float GraceSecondsRemaining { get; set; }
+
     public void Start()
     {
         lock (_stateLock)
@@ -95,6 +112,18 @@ public class GameRoom
             WinnerId = null;
             WinnerBroadcasted = false;
             MatchEnded = false;
+            Phase = GamePhase.Gathering;
+            SuperId = null;
+            HuntSecondsRemaining = 0f;
+            GraceSecondsRemaining = 0f;
+            RoundNumber = 1;
+            foreach (var player in _players.Values)
+            {
+                player.ResetForRound();
+                player.Wins = 0;
+                // A fresh match brings everyone back; only rounds are unforgiving.
+                player.IsDead = false;
+            }
             Touch();
         }
     }

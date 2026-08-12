@@ -345,11 +345,13 @@ public class GameManager
     private static void ResetRoom(GameRoom room)
     {
         // Called just before Start(), so this is the width the match will freeze.
+        // A fixed count, not a random one: every round of every match starts with
+        // the same pool, so "how much is left" always means the same thing.
         var worldWidth = room.EffectiveWorldWidth;
-        var sharedCount = Random.Shared.Next(GameConstants.MinUnderlingsPerPlayer, GameConstants.MaxUnderlingsPerPlayer + 1);
         foreach (var player in room.Players)
         {
-            InitializePlayerEntities(player, player.SpawnIndex, worldWidth, sharedCount);
+            InitializePlayerEntities(
+                player, player.SpawnIndex, worldWidth, GameConstants.UnderlingsPerPlayer);
         }
         room.Touch();
     }
@@ -366,9 +368,9 @@ public class GameManager
             UpdateLeaderMovement(player);
         }
 
-        foreach (var underling in players.SelectMany(p => p.Underlings))
+        foreach (var underling in AllUnderlings(room, players))
         {
-            MaybeNudgeUnderling(underling);
+            SteerUnderlingAway(underling, players);
             underling.Advance(deltaSeconds);
             BounceOffWalls(underling, worldWidth);
             ResolveObstacleCollisions(underling, obstacles, bounce: true);
@@ -383,7 +385,7 @@ public class GameManager
             ResolveThicketCollisions(player.Leader, thickets, bounce: false);
         }
 
-        ResolveUnderlingCollisions(players);
+        ResolveUnderlingCollisions(room, players);
         ResolveLeaderCollisions(players, room);
 
         // Eating an underling shoves the leader 6px, and leader-vs-leader and
@@ -401,8 +403,170 @@ public class GameManager
             ResolveThicketCollisions(player.Leader, thickets, bounce: false);
         }
 
-        CheckForWinner(room);
+        if (room.Phase == GamePhase.Hunting)
+        {
+            UpdateHunt(room, players, deltaSeconds);
+        }
+
         room.Touch();
+    }
+
+    /// <summary>
+    /// The hunt. Every underling has left the map, the super is faster than
+    /// everyone, and it is the only thing that can eat a leader. Catch them all
+    /// and the super takes the match; if anyone is still alive when the clock
+    /// runs out, the round resets and gathering starts again.
+    /// </summary>
+    private void UpdateHunt(GameRoom room, IReadOnlyList<Player> players, float deltaSeconds)
+    {
+        if (room.GraceSecondsRemaining > 0f)
+        {
+            // Nobody can be caught for a moment after the change, so a hunt
+            // never starts with the super already standing on somebody.
+            room.GraceSecondsRemaining = Math.Max(0f, room.GraceSecondsRemaining - deltaSeconds);
+        }
+        else
+        {
+            ResolveSuperCatches(room, players);
+        }
+
+        var survivors = players.Count(p => !p.IsSuper && !p.IsDead);
+        if (survivors == 0)
+        {
+            var super = players.FirstOrDefault(p => p.IsSuper);
+            if (super is not null)
+            {
+                super.Wins++;
+                _logger.LogInformation("Room {RoomId}: {Super} caught everyone", room.Id, super.ConnectionId);
+                room.Stop(super.ConnectionId);
+            }
+            return;
+        }
+
+        room.HuntSecondsRemaining = Math.Max(0f, room.HuntSecondsRemaining - deltaSeconds);
+        if (room.HuntSecondsRemaining <= 0f)
+        {
+            _logger.LogInformation(
+                "Room {RoomId}: {Count} survived the hunt", room.Id, survivors);
+            StartGathering(room, players);
+        }
+    }
+
+    /// <summary>The super eats leaders on contact. Everyone else just bumps.</summary>
+    private void ResolveSuperCatches(GameRoom room, IReadOnlyList<Player> players)
+    {
+        var super = players.FirstOrDefault(p => p.IsSuper);
+        if (super is null) return;
+
+        foreach (var prey in players)
+        {
+            if (prey.IsSuper || prey.IsDead) continue;
+            var reach = super.Leader.Radius + prey.Leader.Radius + GameConstants.HitForgivenessRadius;
+            if (Vector2.DistanceSquared(super.Leader.Position, prey.Leader.Position) >= reach * reach)
+            {
+                continue;
+            }
+
+            // Dead for the match, not the round. Their underlings go with them,
+            // so the pool shrinks as the field does.
+            prey.IsDead = true;
+            prey.Leader.Velocity = Vector2.Zero;
+            prey.Underlings.Clear();
+            _logger.LogInformation("Room {RoomId}: {Super} caught {Prey}", room.Id, super.ConnectionId, prey.ConnectionId);
+        }
+    }
+
+    /// <summary>
+    /// Turns a player super: the map is swept of underlings and the clock starts.
+    /// This is the moment the game changes.
+    /// </summary>
+    private void BecomeSuper(GameRoom room, IReadOnlyList<Player> players, Player super)
+    {
+        room.Phase = GamePhase.Hunting;
+        room.SuperId = super.ConnectionId;
+        room.HuntSecondsRemaining = GameConstants.HuntDurationSeconds;
+        room.GraceSecondsRemaining = GameConstants.HuntStartGraceSeconds;
+
+        foreach (var player in players)
+        {
+            player.IsSuper = ReferenceEquals(player, super);
+            // No more food: the hunt is only about leaders.
+            player.Underlings.Clear();
+        }
+
+        _logger.LogInformation("Room {RoomId}: {Super} became super, hunt begins", room.Id, super.ConnectionId);
+    }
+
+    /// <summary>
+    /// Back to gathering — but only for whoever is still alive. Players caught
+    /// during a hunt stay dead, so each round starts with a smaller field, and
+    /// the match ends when one player is left standing.
+    /// </summary>
+    private void StartGathering(GameRoom room, IReadOnlyList<Player> players)
+    {
+        var alive = players.Where(p => !p.IsDead).ToList();
+        if (alive.Count <= 1)
+        {
+            var winner = alive.FirstOrDefault();
+            if (winner is not null) winner.Wins++;
+            _logger.LogInformation(
+                "Room {RoomId}: {Winner} is the last one standing", room.Id, winner?.ConnectionId ?? "(nobody)");
+            room.Stop(winner?.ConnectionId);
+            return;
+        }
+
+        room.Phase = GamePhase.Gathering;
+        room.SuperId = null;
+        room.HuntSecondsRemaining = 0f;
+        room.GraceSecondsRemaining = 0f;
+        room.RoundNumber++;
+
+        var worldWidth = room.EffectiveWorldWidth;
+        foreach (var player in players)
+        {
+            player.ResetForRound();
+            player.Underlings.Clear();
+            // A dead player keeps no swarm and takes no further part.
+            if (player.IsDead) continue;
+            InitializePlayerEntities(
+                player, player.SpawnIndex, worldWidth, GameConstants.UnderlingsPerPlayer);
+        }
+    }
+
+    /// <summary>Every underling in the room. All food belongs to a player now.</summary>
+    private static IEnumerable<Underling> AllUnderlings(GameRoom room, IReadOnlyList<Player> players)
+        => players.SelectMany(p => p.Underlings);
+
+    /// <summary>The centre of a player's own room — where they spawn and regrow.</summary>
+    private static Vector2 HomeOf(Player player) => Level.SpawnPoints[player.SpawnIndex % Level.SpawnPoints.Count];
+
+    private static Vector2 ClampToWorld(Vector2 position, float worldWidth)
+    {
+        var r = GameConstants.UnderlingRadius;
+        return new Vector2(
+            Math.Clamp(position.X, r, worldWidth - r),
+            Math.Clamp(position.Y, r, GameConstants.WorldHeight - r));
+    }
+
+    private static bool IsClearOfTerrain(
+        Vector2 position, float radius, IReadOnlyList<Obstacle> obstacles, IReadOnlyList<Thicket> thickets)
+    {
+        foreach (var obstacle in obstacles)
+        {
+            var nearestX = Math.Clamp(position.X, obstacle.X, obstacle.X + obstacle.Width);
+            var nearestY = Math.Clamp(position.Y, obstacle.Y, obstacle.Y + obstacle.Height);
+            var dx = position.X - nearestX;
+            var dy = position.Y - nearestY;
+            if (dx * dx + dy * dy < radius * radius) return false;
+        }
+        foreach (var thicket in thickets)
+        {
+            var reach = thicket.Radius + radius;
+            var dx = position.X - thicket.X;
+            var dy = position.Y - thicket.Y;
+            if (dx * dx + dy * dy < reach * reach) return false;
+        }
+        return true;
     }
 
     private static void UpdateLeaderMovement(Player player)
@@ -410,17 +574,60 @@ public class GameManager
         var desiredVelocity = player.PendingDirection.ToVector();
         if (desiredVelocity.LengthSquared > 0.01f)
         {
-            desiredVelocity = desiredVelocity.WithLength(GameConstants.LeaderSpeed);
+            // Speed falls as the belly fills, and Apex clears the penalty. This
+            // is the whole reason carrying four is frightening and reaching five
+            // feels like relief.
+            desiredVelocity = desiredVelocity.WithLength(player.CurrentSpeed);
         }
         player.Leader.Velocity = desiredVelocity;
     }
 
-    private static void MaybeNudgeUnderling(Underling underling)
+    /// <summary>
+    /// Owned underlings keep station on their leader; loose ones drift.
+    ///
+    /// They used to random-walk with no idea who they belonged to, which meant a
+    /// "swarm" was just scattered dots and raiding somebody had no defender to
+    /// get past. Following turns a swarm into a place — you have to go into it
+    /// and come back out.
+    /// </summary>
+    /// <summary>
+    /// Underlings stay scattered and run from anything that can eat them.
+    ///
+    /// They used to escort their owner, which turned a swarm into one cluster a
+    /// leader could clear in a single pass. Scattered and evasive, each one is a
+    /// small chase instead — and because they only fear leaders that can
+    /// actually eat them, an underling ignores its own.
+    /// </summary>
+    private static void SteerUnderlingAway(Underling underling, IReadOnlyList<Player> players)
     {
+        Player? threat = null;
+        var nearestSq = GameConstants.UnderlingFleeRadius * GameConstants.UnderlingFleeRadius;
+
+        foreach (var player in players)
+        {
+            // Your own leader is harmless to you, and a dead one is harmless to
+            // everyone.
+            if (player.IsDead || player.ConnectionId == underling.OwnerId) continue;
+            var distanceSq = Vector2.DistanceSquared(player.Leader.Position, underling.Position);
+            if (distanceSq < nearestSq)
+            {
+                nearestSq = distanceSq;
+                threat = player;
+            }
+        }
+
+        if (threat is not null)
+        {
+            var away = (underling.Position - threat.Leader.Position).Normalized();
+            if (away.LengthSquared == 0) away = RandomUnitVector();
+            underling.Velocity = away * GameConstants.UnderlingFleeSpeed;
+            return;
+        }
+
+        // Nothing near: drift, so the map keeps shifting instead of freezing.
         if (Random.Shared.NextDouble() < 0.02)
         {
-            var direction = RandomUnitVector();
-            underling.Velocity = direction * GameConstants.UnderlingSpeed;
+            underling.Velocity = RandomUnitVector() * GameConstants.UnderlingDriftSpeed;
         }
     }
 
@@ -533,9 +740,11 @@ public class GameManager
         }
     }
 
-    private static void ResolveUnderlingCollisions(IReadOnlyList<Player> players)
+    private static void ResolveUnderlingCollisions(GameRoom room, IReadOnlyList<Player> players)
     {
-        var allUnderlings = players.SelectMany(p => p.Underlings).ToList();
+        // Neutral food separates from owned underlings too, so a respawn batch
+        // doesn't land as one overlapping clump in the middle of the map.
+        var allUnderlings = AllUnderlings(room, players).ToList();
         for (var i = 0; i < allUnderlings.Count; i++)
         {
             for (var j = i + 1; j < allUnderlings.Count; j++)
@@ -579,6 +788,8 @@ public class GameManager
                     {
                         direction = new Vector2(1f, 0f);
                     }
+                    // Leaders just bump. The only thing that hurts a leader is
+                    // the super, and that is handled by the hunt.
                     first.Velocity = direction * GameConstants.LeaderSpeed;
                     second.Velocity = direction * -GameConstants.LeaderSpeed;
                     first.Position += direction * 4f;
@@ -592,50 +803,70 @@ public class GameManager
 
     private void ResolveLeaderUnderlingCollisions(IReadOnlyList<Player> players, GameRoom room)
     {
+        // Nothing to eat during a hunt — the map was swept when the game changed.
+        if (room.Phase != GamePhase.Gathering) return;
+
         foreach (var player in players)
         {
+            if (player.IsDead) continue;
+
             foreach (var opponent in players.Where(p => p != player))
             {
-                var leader = player.Leader;
-                for (var i = opponent.Underlings.Count - 1; i >= 0; i--)
-                {
-                    var underling = opponent.Underlings[i];
-                    var distanceSq = Vector2.DistanceSquared(leader.Position, underling.Position);
-                    // Extra buffer compensates for the leader's optimistic client position
-                    // lagging behind the server position by roughly one network round-trip.
-                    var radiusSum = leader.Radius + underling.Radius + GameConstants.HitForgivenessRadius;
-                    if (distanceSq < radiusSum * radiusSum)
-                    {
-                        opponent.Underlings.RemoveAt(i);
-                        var pushDirection = (leader.Position - underling.Position).Normalized();
-                        if (pushDirection.LengthSquared == 0)
-                        {
-                            pushDirection = RandomUnitVector();
-                        }
+                EatFrom(player, opponent.Underlings, room);
+            }
 
-                        leader.Position += pushDirection * 6f;
-                        leader.Velocity = pushDirection * GameConstants.LeaderSpeed;
-                        room.Touch();
-                    }
-                }
+            if (player.Eaten >= GameConstants.UnderlingsToBecomeSuper)
+            {
+                BecomeSuper(room, players, player);
+                return;
             }
         }
-    }
 
-    private void CheckForWinner(GameRoom room)
-    {
-        // Free-for-all: the match ends when at most one player still has underlings.
-        var alive = room.Players.Where(p => p.Underlings.Count > 0).ToList();
-        if (alive.Count > 1)
+        // Nothing regrows, so the map can run dry with nobody at the threshold —
+        // players eating each other's swarms unevenly, or a swarm dying with its
+        // owner. Whoever ate most takes the hunt rather than letting gathering
+        // stall forever with no food left.
+        if (players.Any(p => !p.IsDead) && players.All(p => p.Underlings.Count == 0))
         {
-            return;
+            var best = players.Where(p => !p.IsDead).OrderByDescending(p => p.Eaten).First();
+            _logger.LogInformation(
+                "Room {RoomId}: map is empty, {Player} leads with {Eaten}", room.Id, best.ConnectionId, best.Eaten);
+            BecomeSuper(room, players, best);
         }
-
-        // Exactly one survivor wins; zero survivors (simultaneous knockout) is a draw.
-        var winnerId = alive.Count == 1 ? alive[0].ConnectionId : null;
-        room.Stop(winnerId);
-        _logger.LogInformation("Room {RoomId} match ended, winner {ConnectionId}", room.Id, winnerId ?? "(draw)");
     }
+
+    private static void EatFrom(Player player, List<Underling> food, GameRoom room)
+    {
+        var leader = player.Leader;
+        for (var i = food.Count - 1; i >= 0; i--)
+        {
+            var underling = food[i];
+            var distanceSq = Vector2.DistanceSquared(leader.Position, underling.Position);
+            // Extra buffer compensates for the leader's optimistic client position
+            // lagging behind the server position by roughly one network round-trip.
+            var radiusSum = leader.Radius + underling.Radius + GameConstants.HitForgivenessRadius;
+            if (distanceSq >= radiusSum * radiusSum)
+            {
+                continue;
+            }
+
+            // Nothing regrows. The pool the round started with is the pool, so
+            // gathering is a race for something that only ever gets scarcer.
+            food.RemoveAt(i);
+            player.Eaten++;
+
+            var pushDirection = (leader.Position - underling.Position).Normalized();
+            if (pushDirection.LengthSquared == 0)
+            {
+                pushDirection = RandomUnitVector();
+            }
+
+            leader.Position += pushDirection * 6f;
+            leader.Velocity = pushDirection * player.CurrentSpeed;
+            room.Touch();
+        }
+    }
+
 
     // Obstacle geometry is static for the whole app lifetime, so map both
     // variants (half world = rooms 1-4, full world = all 8) once.
@@ -698,7 +929,11 @@ public class GameManager
                         "underling",
                         u.Velocity.X,
                         u.Velocity.Y))
-                    .ToList()))
+                    .ToList(),
+                player.Eaten,
+                player.IsSuper,
+                player.IsDead,
+                player.Wins))
             .ToList();
 
         var worldWidth = room.EffectiveWorldWidth;
@@ -709,7 +944,9 @@ public class GameManager
 
         return new GameStateDto(
             room.Id, room.IsActive, players, room.WinnerId, serverTime, snapshotId,
-            room.HostId, obstacles, worldWidth, GameConstants.WorldHeight, rooms, thickets);
+            room.HostId, obstacles, worldWidth, GameConstants.WorldHeight, rooms, thickets,
+            room.Phase, room.SuperId, room.HuntSecondsRemaining, room.RoundNumber,
+            GameConstants.UnderlingsToBecomeSuper);
     }
 
     private static string GenerateRoomId()
@@ -723,6 +960,9 @@ public class GameManager
             }
         });
     }
+
+    /// <summary>Rotated 90 degrees, used to slide along an obstacle instead of into it.</summary>
+    private static Vector2 Perpendicular(Vector2 v) => new(-v.Y, v.X);
 
     private static Vector2 RandomUnitVector()
     {

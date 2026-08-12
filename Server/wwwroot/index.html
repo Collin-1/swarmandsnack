@@ -25,8 +25,17 @@
       // This runs in <head> and writes to documentElement, which already exists,
       // so the scale is set before first paint and nothing visibly reflows.
       (function () {
-        var DESIGN_W = 1378;
-        var DESIGN_H = 869;
+        // Two design sizes, because the layout has two modes. In the lobby the
+        // 320px setup panel is beside the game; in a match it is collapsed and
+        // only the game column remains, which is both narrower and shorter.
+        // Measuring against the wrong one would shrink the match view for a
+        // panel that is not on screen.
+        var DESIGN = {
+          lobby: { w: 1378, h: 869 },
+          match: { w: 1026, h: 780 },
+        };
+        var DESIGN_W = DESIGN.lobby.w;
+        var DESIGN_H = DESIGN.lobby.h;
         // style.css turns <main> into a row at 960px. Below that the layout is
         // genuinely stacked, so these side-by-side constants don't describe it
         // and scaling against them would shrink it for no reason.
@@ -42,11 +51,14 @@
             root.style.setProperty("--ui-scale", "1");
             return;
           }
+          var mode = document.body && document.body.classList.contains("is-playing")
+            ? DESIGN.match
+            : DESIGN.lobby;
           // Never scale up: on big screens the design stays at its intended size.
           var scale = Math.min(
             1,
-            (window.innerWidth - SAFETY_PX) / DESIGN_W,
-            (window.innerHeight - SAFETY_PX) / DESIGN_H
+            (window.innerWidth - SAFETY_PX) / mode.w,
+            (window.innerHeight - SAFETY_PX) / mode.h
           );
           // Floor, never round — rounding up reintroduces the overflow.
           root.style.setProperty("--ui-scale", String(Math.floor(scale * 1000) / 1000));
@@ -54,6 +66,8 @@
 
         fitUiScale();
         window.addEventListener("resize", fitUiScale);
+        // game.js toggles .is-playing, which changes which design size applies.
+        window.refitUiScale = fitUiScale;
       })();
     </script>
     <style>
@@ -516,6 +530,10 @@
       .game-column {
         display: flex;
         flex-direction: column;
+        /* The canvas defines this column's width, not the HUD bar. Without the
+           clamp the bar's contents set the intrinsic width and the column grew
+           to 1311px on a wide screen, stretching the bar well past the game. */
+        max-width: 962px;
       }
 
       /* Voice bar: player avatars + microphone toggle */
@@ -657,20 +675,169 @@
         box-shadow: none;
       }
 
+      /* Kept for the lobby; mid-match the counts live on the avatars instead. */
       .scoreboard-hud {
-        background: rgba(15, 23, 42, 0.95);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        border-bottom: 2px solid var(--accent);
-        padding: 0.45rem 1.2rem;
         display: flex;
-        gap: 2.5rem;
-        font-size: 1.05rem;
+        gap: 1.1rem;
+        font-size: 0.95rem;
         font-weight: 700;
         font-family: 'Rajdhani', sans-serif;
         text-transform: uppercase;
         letter-spacing: 1px;
-        min-height: 2.2rem;
         align-items: center;
+        flex: 0 1 auto;
+        justify-content: center;
+        overflow: hidden;
+      }
+      body.is-playing .scoreboard-hud {
+        display: none;
+      }
+
+      /* Swarm count, sitting on the avatar disc. */
+      .avatar-score {
+        position: absolute;
+        right: -5px;
+        bottom: -4px;
+        min-width: 17px;
+        padding: 0 3px;
+        border-radius: 9px;
+        background: rgba(4, 9, 18, 0.95);
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 0.72rem;
+        font-weight: 700;
+        line-height: 1.1;
+        text-align: center;
+      }
+      /* Carrying: the chip warns the room that this player is worth hunting.
+         The number shown is banked score; the pip is what they're carrying. */
+      .avatar.loaded .avatar-disc {
+        box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.9), 0 0 14px rgba(251, 191, 36, 0.6);
+      }
+      .avatar.apex .avatar-disc {
+        box-shadow: 0 0 0 2px #fff, 0 0 20px rgba(255, 255, 255, 0.9);
+        animation: apexPulse 0.6s ease-in-out infinite alternate;
+      }
+      @keyframes apexPulse {
+        from { transform: scale(1); }
+        to { transform: scale(1.12); }
+      }
+      .avatar[data-snack]:not([data-snack=""]) .avatar-disc::after {
+        content: attr(data-snack);
+        position: absolute;
+        left: -6px;
+        top: -5px;
+        min-width: 15px;
+        padding: 0 3px;
+        border-radius: 8px;
+        background: #fbbf24;
+        color: #1c1207;
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 0.66rem;
+        font-weight: 700;
+        line-height: 1.25;
+        text-align: center;
+      }
+      .avatar[data-snack]:not([data-snack=""]) .avatar-disc {
+        overflow: visible;
+      }
+
+      .phase-banner {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 0.4rem 1.1rem;
+        border-radius: 3px;
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 0.95rem;
+        font-weight: 700;
+        letter-spacing: 2px;
+        white-space: nowrap;
+        pointer-events: none;
+        background: rgba(5, 9, 18, 0.82);
+        border: 1px solid rgba(34, 211, 238, 0.5);
+        color: var(--accent);
+      }
+      .phase-banner.super {
+        border-color: #fff;
+        color: #fff;
+        background: rgba(30, 12, 60, 0.85);
+        animation: apexPulse 0.5s ease-in-out infinite alternate;
+      }
+      .phase-banner.hunted {
+        border-color: #f43f5e;
+        color: #fb7185;
+      }
+      .phase-banner.out {
+        border-color: #475569;
+        color: #94a3b8;
+      }
+
+      .match-clock {
+        display: none;
+        font-family: 'Rajdhani', sans-serif;
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: var(--accent);
+        min-width: 3.4rem;
+        text-align: center;
+      }
+      .match-clock.urgent {
+        color: #f43f5e;
+        animation: apexPulse 0.5s ease-in-out infinite alternate;
+      }
+      body.is-playing .match-clock {
+        display: block;
+      }
+
+      /* ---- Match mode: the setup panel gets out of the way ----------------
+         The panel is 320px wide and 805px tall, taller than the game column,
+         so it was the single thing forcing the page to scale down on laptops.
+         Mid-match none of its controls are usable anyway. */
+      body.is-playing .controls {
+        display: none;
+      }
+      body.is-playing.panel-open .controls {
+        /* Summoned back over the game rather than pushing it aside, so bringing
+           it up never re-triggers the scaling it was hidden to avoid. */
+        display: block;
+        position: fixed;
+        top: 50%;
+        left: 1.5rem;
+        transform: translateY(-50%);
+        z-index: 40;
+        max-height: 92vh;
+        overflow-y: auto;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+      }
+      .panel-toggle {
+        display: none;
+        letter-spacing: 2px;
+        font-family: 'Rajdhani', sans-serif;
+        font-weight: 700;
+      }
+      body.is-playing .panel-toggle {
+        display: flex;
+      }
+      body.is-playing .voice-status {
+        display: none;
+      }
+
+      .minimap {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        border: 1px solid rgba(34, 211, 238, 0.45);
+        border-radius: 3px;
+        background: rgba(5, 9, 18, 0.72);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+        pointer-events: none;
+        display: none;
+      }
+      body.is-playing .minimap {
+        display: block;
       }
 
       @media (max-width: 900px) {
@@ -742,7 +909,15 @@
       <div class="game-column">
         <div id="voiceBar" class="voice-bar">
           <div id="avatarBar" class="avatar-bar"></div>
+          <div id="scoreboard" class="scoreboard-hud"></div>
           <div class="voice-controls">
+            <!-- Only shown mid-match, when the setup panel is collapsed: keeps
+                 the room code reachable and lets the panel be summoned back. -->
+            <div id="matchClock" class="match-clock" title="Time remaining">6:00</div>
+            <button id="panelToggle" class="mic-btn panel-toggle" type="button"
+                    title="Show room details">
+              <span id="panelToggleCode">ROOM</span>
+            </button>
             <span id="voiceStatus" class="voice-status">Voice off</span>
             <button id="micBtn" class="mic-btn" type="button">
               <span id="micIcon">🎤</span><span id="micLabel">Enable Mic</span>
@@ -756,9 +931,15 @@
                    aria-label="Game volume" title="Game volume" />
           </div>
         </div>
-        <div id="scoreboard" class="scoreboard-hud"></div>
+        <!-- The scoreboard moved up into the HUD bar. It used to be a second
+             stacked strip, and those two rows were 40px of the height that
+             forced the whole page to scale down on a 768-tall laptop. -->
         <section class="game-area">
           <canvas id="gameCanvas" width="960" height="640"></canvas>
+          <!-- What the game wants from you right now. The rules change
+               completely between phases, so this is not decoration. -->
+          <div id="phaseBanner" class="phase-banner" style="display: none"></div>
+          <canvas id="minimap" class="minimap" width="192" height="128"></canvas>
           <div id="overlay" class="overlay hidden">
             <div id="overlayMessage"></div>
             <button id="restartBtn">Play Again</button>

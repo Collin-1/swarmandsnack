@@ -12,7 +12,13 @@ public record GameStateDto(
     float WorldWidth,
     float WorldHeight,
     IReadOnlyCollection<RoomDto> Rooms,
-    IReadOnlyCollection<ThicketDto> Thickets
+    IReadOnlyCollection<ThicketDto> Thickets,
+    // ---- Two phases ----
+    string Phase,
+    string? SuperId,
+    float HuntSecondsRemaining,
+    int RoundNumber,
+    int UnderlingsToBecomeSuper
 );
 
 /// <summary>
@@ -53,7 +59,14 @@ public record PlayerStateDto(
     string DisplayName,
     string TeamColor,
     EntityStateDto Leader,
-    IReadOnlyCollection<EntityStateDto> Underlings
+    IReadOnlyCollection<EntityStateDto> Underlings,
+    // ---- Round state ----
+    // Eaten is progress toward turning super, drawn on the creature itself so
+    // everyone can see who is close.
+    int Eaten,
+    bool IsSuper,
+    bool IsOut,
+    int Wins
 );
 
 public record EntityStateDto(
