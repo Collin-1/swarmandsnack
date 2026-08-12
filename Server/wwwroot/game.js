@@ -2288,6 +2288,7 @@
       });
     }
 
+    detectCatches(state);
     detectEatBursts(state);
     drawEatBursts(seconds);
 
@@ -2332,6 +2333,31 @@
   const MAX_EATS_PER_FRAME = 2;
   const EAT_REACH = 90;
 
+  // Being caught is the single biggest event in a match, so it gets a burst of
+  // its own — much larger than an underling being eaten, in the victim's colour.
+  // Without it a catch was completely silent on screen.
+  const wasAlive = new Map();
+
+  function detectCatches(state) {
+    for (const player of state.players) {
+      const alive = !player.isDead;
+      const before = wasAlive.get(player.connectionId);
+      if (before === true && !alive) {
+        const colours = paletteFor(player.teamColor);
+        for (let ring = 0; ring < 3; ring++) {
+          eatBursts.push({
+            x: player.leader.x,
+            y: player.leader.y,
+            colour: colours.leader,
+            age: -ring * 0.12, // stagger so it reads as a shockwave, not one ring
+            scale: 3.4,
+          });
+        }
+      }
+      wasAlive.set(player.connectionId, alive);
+    }
+  }
+
   function detectEatBursts(state) {
     let gone = 0;
     for (const entry of underlingTrack.values()) {
@@ -2371,13 +2397,16 @@
     for (let i = eatBursts.length - 1; i >= 0; i--) {
       const burst = eatBursts[i];
       burst.age += seconds;
-      const t = burst.age / 0.42;
+      // Staggered rings start with a negative age so they fire in sequence.
+      if (burst.age < 0) continue;
+      const scale = burst.scale || 1;
+      const t = burst.age / (0.42 * (scale > 1 ? 1.6 : 1));
       if (t >= 1) { eatBursts.splice(i, 1); continue; }
       ctx.globalAlpha = (1 - t) * 0.8;
       ctx.strokeStyle = burst.colour;
-      ctx.lineWidth = 3 * (1 - t) + 1;
+      ctx.lineWidth = (3 * (1 - t) + 1) * scale;
       ctx.beginPath();
-      ctx.arc(burst.x, burst.y, 8 + t * 34, 0, Math.PI * 2);
+      ctx.arc(burst.x, burst.y, (8 + t * 34) * scale, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();

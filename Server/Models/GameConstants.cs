@@ -19,8 +19,9 @@ public static class GameConstants
     public const float LeaderRadius = 18f;
     public const float UnderlingSpeed = 120f;
     public const float UnderlingRadius = 12f;
-    public const int MinUnderlingsPerPlayer = 3;
-    public const int MaxUnderlingsPerPlayer = 5;
+    // Swarm size is a fixed constant now — see UnderlingsPerPlayer. It used to
+    // be rolled randomly between a min and a max per match, so no two games
+    // started from the same board.
     public static readonly TimeSpan RoomInactivityTimeout = TimeSpan.FromMinutes(10);
     public const int TargetTickRateMs = 30;
     public const float TickDeltaSeconds = TargetTickRateMs / 1000f;
