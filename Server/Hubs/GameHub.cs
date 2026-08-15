@@ -49,6 +49,7 @@ public class GameHub : Hub
     public async Task CreateGame(string? displayName = null)
     {
         var (room, player) = _gameManager.CreateRoom(Context.ConnectionId, displayName);
+        await LeaveCurrentRoomAsync(exceptRoomId: room.Id);
         ConnectionRooms[Context.ConnectionId] = room.Id;
         await Groups.AddToGroupAsync(Context.ConnectionId, room.Id);
 
@@ -70,6 +71,11 @@ public class GameHub : Hub
             return;
         }
 
+        // Joined somewhere new, so let go of wherever we were. Without this a
+        // player who finishes a match and joins another room stays in the roster
+        // of the old one and receives snapshots from both.
+        await LeaveCurrentRoomAsync(exceptRoomId: roomId);
+
         ConnectionRooms[Context.ConnectionId] = roomId;
         await Groups.AddToGroupAsync(Context.ConnectionId, roomId);
 
@@ -82,6 +88,21 @@ public class GameHub : Hub
         });
 
         await BroadcastLobbyUpdate(roomId);
+    }
+
+    /// <summary>
+    /// Drops this connection from whatever room it is currently in, leaving
+    /// <paramref name="exceptRoomId"/> alone so a move between rooms does not
+    /// undo the join it just made.
+    /// </summary>
+    private async Task LeaveCurrentRoomAsync(string? exceptRoomId = null)
+    {
+        if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var previousRoomId)) return;
+        if (previousRoomId == exceptRoomId) return;
+
+        _gameManager.LeaveRoom(previousRoomId, Context.ConnectionId);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, previousRoomId);
+        await BroadcastLobbyUpdate(previousRoomId);
     }
 
     public Task LeaveGame()

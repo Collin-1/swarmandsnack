@@ -105,6 +105,33 @@ public class GameManager
         return true;
     }
 
+    /// <summary>
+    /// Removes a player from one specific room. Distinct from HandleDisconnect,
+    /// which sweeps every room — that is wrong when someone is moving between
+    /// rooms, because it would also pull them out of the one they just joined.
+    /// </summary>
+    public void LeaveRoom(string roomId, string connectionId)
+    {
+        if (!_rooms.TryGetValue(roomId, out var room)) return;
+        if (!room.RemovePlayer(connectionId)) return;
+
+        _logger.LogInformation("Player {ConnectionId} left room {RoomId}", connectionId, roomId);
+
+        lock (room.SyncRoot)
+        {
+            if (room.IsActive && room.PlayerCount == 1)
+            {
+                room.Stop(room.Players.First().ConnectionId);
+            }
+        }
+
+        if (room.IsEmpty)
+        {
+            _rooms.TryRemove(roomId, out _);
+            _logger.LogInformation("Removed empty room {RoomId}", roomId);
+        }
+    }
+
     public bool TryRename(string roomId, string connectionId, string? displayName)
     {
         if (!_rooms.TryGetValue(roomId, out var room)) return false;

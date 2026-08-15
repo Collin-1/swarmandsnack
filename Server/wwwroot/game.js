@@ -139,12 +139,20 @@
     }
   }
 
-  function setInviteLink(code) {
-    // Once you are in a room, "create" and "join" are no longer choices — they
-    // would drop you out of the room you are standing in. Both this and the room
-    // code field are hidden from here on; the invite link replaces them.
-    document.body.classList.toggle("in-room", !!code);
+  /**
+   * Hides create/join while a room is in progress, and brings them back the
+   * moment it is over.
+   *
+   * These two things have to be separate from the invite link. Tying them
+   * together meant the class was set when a room was entered and never cleared,
+   * because nothing ever set the invite link back to empty — so once a match
+   * finished, a player had no way to join a different game short of reloading.
+   */
+  function setRoomControls(inRoom) {
+    document.body.classList.toggle("in-room", !!inRoom);
+  }
 
+  function setInviteLink(code) {
     if (!code) {
       if (inviteSection) inviteSection.style.display = "none";
       return;
@@ -235,6 +243,7 @@
       lobbyCount = 1;
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
+      setRoomControls(true);
       hideOverlay();
       updateStatusFromState(serverState);
     });
@@ -248,6 +257,7 @@
       serverState = createEmptyState();
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
+      setRoomControls(true);
       hideOverlay();
       updateStatusFromState(serverState);
       connection.invoke("RequestState").catch(console.error);
@@ -391,6 +401,10 @@
 
       // Ensure state reflects game over so movement stops (truthy sentinel for a draw).
       serverState.winnerId = payload.winnerId || "__draw__";
+
+      // The match is finished, so joining a different game is a reasonable thing
+      // to want. Bring create/join and the room code field back.
+      setRoomControls(false);
 
       GameAudio.playTrack("victory");
 
