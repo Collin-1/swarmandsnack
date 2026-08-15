@@ -178,6 +178,23 @@ public class GameHub : Hub
     }
 
     /// <summary>Announces whether this player's microphone is live, for avatar UI.</summary>
+    /// <summary>
+    /// Rename after joining. An invite link joins as soon as the page connects,
+    /// so the player has not typed a name yet; without this they are stuck with
+    /// whatever the field happened to hold.
+    /// </summary>
+    public Task SetDisplayName(string? displayName)
+    {
+        if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var roomId))
+        {
+            return Task.CompletedTask;
+        }
+
+        _gameManager.TryRename(roomId, Context.ConnectionId, displayName);
+        // The next state broadcast carries the new name, so nothing extra to send.
+        return Task.CompletedTask;
+    }
+
     public async Task SetVoiceState(bool micEnabled)
     {
         if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var roomId))

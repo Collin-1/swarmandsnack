@@ -140,6 +140,11 @@
   }
 
   function setInviteLink(code) {
+    // Once you are in a room, "create" and "join" are no longer choices — they
+    // would drop you out of the room you are standing in. Both this and the room
+    // code field are hidden from here on; the invite link replaces them.
+    document.body.classList.toggle("in-room", !!code);
+
     if (!code) {
       if (inviteSection) inviteSection.style.display = "none";
       return;
@@ -661,6 +666,33 @@
     }
   }
 
+  // Must match GameConstants.WallThickness — rooms are drawn with walls inside
+  // their own footprint, so the standable interior is inset by this much.
+  const WALL_THICKNESS = 44;
+
+  /** The room this player spawns in. Rooms arrive in spawn-index order. */
+  function myRoomRect() {
+    if (!worldRooms.length || !myPlayerId) return null;
+    const index = (serverState.players ?? []).findIndex((p) => p.connectionId === myPlayerId);
+    if (index < 0) return null;
+    return worldRooms[index % worldRooms.length] || null;
+  }
+
+  function penLocalLeaderInLobby() {
+    if (serverState.isActive || serverState.winnerId) return;
+    const pen = myRoomRect();
+    if (!pen) return;
+
+    const inset = WALL_THICKNESS + LEADER_RADIUS;
+    const minX = pen.x + inset;
+    const maxX = pen.x + pen.width - inset;
+    const minY = pen.y + inset;
+    const maxY = pen.y + pen.height - inset;
+
+    myLocalLeader.x = clamp(myLocalLeader.x, Math.min(minX, maxX), Math.max(minX, maxX));
+    myLocalLeader.y = clamp(myLocalLeader.y, Math.min(minY, maxY), Math.max(minY, maxY));
+  }
+
   function updateLocalLeader(deltaSeconds) {
     // Move local leader instantly based on input
     const vx = localDirectionVector.x * LEADER_SPEED;
@@ -678,6 +710,11 @@
     );
     myLocalLeader.vx = vx;
     myLocalLeader.vy = vy;
+
+    // In the lobby you can drive, but only inside your own room. The server pens
+    // you the same way; mirroring it here keeps the optimistic position from
+    // rubber-banding against a clamp it cannot see coming.
+    penLocalLeaderInLobby();
 
     // Slide the optimistic local leader around obstacles so it matches the server
     // (which does the same circle-vs-rectangle resolution) and doesn't clip walls.
@@ -2516,10 +2553,13 @@
       const eaten = p?.eaten ?? 0;
       const isSuper = !!p?.isSuper;
       const isDead = !!p?.isDead;
-      const stamp = `${eaten}|${isSuper}|${isDead}`;
+      // In the lobby the count is zero for everyone, which is just noise on
+      // eight chips. The badge only earns its place once there is a race on.
+      const playing = !!state?.isActive;
+      const stamp = `${eaten}|${isSuper}|${isDead}|${playing}`;
       if (el.score && el.wrap._stamp !== stamp) {
         el.wrap._stamp = stamp;
-        el.score.textContent = isSuper ? "⚡" : isDead ? "✕" : String(eaten);
+        el.score.textContent = isSuper ? "⚡" : isDead ? "✕" : playing ? String(eaten) : "";
         el.wrap.classList.toggle("apex", isSuper);
         el.wrap.classList.toggle("eliminated", isDead);
         el.wrap.dataset.snack = "";
@@ -2850,6 +2890,27 @@
       setStatus("Failed to join game.");
     }
   });
+
+  // Renaming has to work after joining, because an invite link joins the moment
+  // the page connects — before the player has typed anything.
+  if (displayNameInput) {
+    let lastSentName = null;
+    const pushName = async () => {
+      const name = displayNameInput.value.trim();
+      if (!roomId || !name || name === lastSentName) return;
+      lastSentName = name;
+      try {
+        await connection.invoke("SetDisplayName", name);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    displayNameInput.addEventListener("change", pushName);
+    displayNameInput.addEventListener("blur", pushName);
+    displayNameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { displayNameInput.blur(); }
+    });
+  }
 
   restartBtn.addEventListener("click", async () => {
     if (!roomId) {
