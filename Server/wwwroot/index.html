@@ -548,14 +548,17 @@
         justify-content: space-between;
         min-height: 3.6rem;
       }
+      /* Everyone fits, always. This used to scroll horizontally, so with more
+         than two players you saw two avatars and a scrollbar while the separate
+         scoreboard listed everybody — the roster was in two places and neither
+         was complete. Eight discs at this size come to about 350px, well inside
+         the bar, so nothing needs to scroll. */
       .avatar-bar {
         display: flex;
-        align-items: center;
-        gap: 0.65rem;
-        overflow-x: auto;
-        flex: 1;
+        align-items: flex-start;
+        gap: 0.5rem;
+        flex: 0 1 auto;
         min-width: 0;
-        scrollbar-width: thin;
       }
       .avatar-bar:empty::after {
         content: "No players yet";
@@ -612,13 +615,22 @@
         text-align: center;
       }
       .avatar-name {
-        font-size: 0.72rem;
+        font-size: 0.66rem;
         color: #cbd5e1;
-        max-width: 68px;
+        max-width: 52px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.3px;
+        text-align: center;
+      }
+
+      /* In a room the only sensible actions are start and invite. Leaving these
+         visible invites a player to create a second game on top of the one they
+         are already standing in. */
+      body.in-room .buttons,
+      body.in-room #roomCodeRow {
+        display: none;
       }
       .voice-controls {
         display: flex;
@@ -675,21 +687,11 @@
         box-shadow: none;
       }
 
-      /* Kept for the lobby; mid-match the counts live on the avatars instead. */
+      /* Gone. It listed every player's name and count beside an avatar strip
+         that showed the same players, so the roster appeared twice and the
+         avatars were squeezed into a scrollbar to make room for it. The avatars
+         carry the name and the count on their own. */
       .scoreboard-hud {
-        display: flex;
-        gap: 1.1rem;
-        font-size: 0.95rem;
-        font-weight: 700;
-        font-family: 'Rajdhani', sans-serif;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        align-items: center;
-        flex: 0 1 auto;
-        justify-content: center;
-        overflow: hidden;
-      }
-      body.is-playing .scoreboard-hud {
         display: none;
       }
 
@@ -709,8 +711,11 @@
         line-height: 1.1;
         text-align: center;
       }
-      /* Carrying: the chip warns the room that this player is worth hunting.
-         The number shown is banked score; the pip is what they're carrying. */
+      /* No badge in the lobby, rather than an empty pill on every chip. */
+      .avatar-score:empty {
+        display: none;
+      }
+      /* The super. Unmistakable in the roster as well as on the field. */
       .avatar.loaded .avatar-disc {
         box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.9), 0 0 14px rgba(251, 191, 36, 0.6);
       }
@@ -882,7 +887,7 @@
             placeholder="Optional"
           />
         </div>
-        <div class="form-row">
+        <div class="form-row" id="roomCodeRow">
           <label for="roomCode">Room Code</label>
           <input
             id="roomCode"

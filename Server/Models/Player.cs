@@ -13,7 +13,18 @@ public class Player
 
     public string ConnectionId { get; }
     public string TeamColor { get; }
-    public string DisplayName { get; }
+    /// <summary>
+    /// Settable, because an invite link auto-joins the moment the page connects
+    /// — before anyone has had a chance to type a name. Renaming has to work
+    /// after the fact or those players are stuck as their team colour.
+    /// </summary>
+    public string DisplayName { get; private set; }
+
+    public void Rename(string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName)) return;
+        DisplayName = displayName.Trim();
+    }
     public Leader Leader { get; }
     public List<Underling> Underlings { get; }
     public Direction PendingDirection { get; set; } = Direction.None;

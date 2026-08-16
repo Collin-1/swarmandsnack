@@ -105,6 +105,42 @@ public class GameManager
         return true;
     }
 
+    /// <summary>
+    /// Removes a player from one specific room. Distinct from HandleDisconnect,
+    /// which sweeps every room — that is wrong when someone is moving between
+    /// rooms, because it would also pull them out of the one they just joined.
+    /// </summary>
+    public void LeaveRoom(string roomId, string connectionId)
+    {
+        if (!_rooms.TryGetValue(roomId, out var room)) return;
+        if (!room.RemovePlayer(connectionId)) return;
+
+        _logger.LogInformation("Player {ConnectionId} left room {RoomId}", connectionId, roomId);
+
+        lock (room.SyncRoot)
+        {
+            if (room.IsActive && room.PlayerCount == 1)
+            {
+                room.Stop(room.Players.First().ConnectionId);
+            }
+        }
+
+        if (room.IsEmpty)
+        {
+            _rooms.TryRemove(roomId, out _);
+            _logger.LogInformation("Removed empty room {RoomId}", roomId);
+        }
+    }
+
+    public bool TryRename(string roomId, string connectionId, string? displayName)
+    {
+        if (!_rooms.TryGetValue(roomId, out var room)) return false;
+        if (!room.TryGetPlayer(connectionId, out var player) || player is null) return false;
+        player.Rename(displayName);
+        room.Touch();
+        return true;
+    }
+
     public void HandleDisconnect(string connectionId)
     {
         foreach (var (roomId, room) in _rooms)
@@ -195,6 +231,10 @@ public class GameManager
                 if (room.IsActive)
                 {
                     UpdateRoom(room, (float)deltaSeconds);
+                }
+                else if (!room.MatchEnded)
+                {
+                    UpdateLobby(room, (float)deltaSeconds);
                 }
 
                 winnerId = room.WinnerId;
@@ -359,6 +399,45 @@ public class GameManager
                 player, player.SpawnIndex, worldWidth, GameConstants.UnderlingsPerPlayer);
         }
         room.Touch();
+    }
+
+    /// <summary>
+    /// Waiting-room movement. Leaders can drive around while the host gets
+    /// everyone in, so the lobby is not a still image — but each one is penned
+    /// inside its own room, so nobody can wander the map or bump anyone else
+    /// before the match starts.
+    /// </summary>
+    private static void UpdateLobby(GameRoom room, float deltaSeconds)
+    {
+        foreach (var player in room.Players)
+        {
+            UpdateLeaderMovement(player);
+            player.Leader.Advance(deltaSeconds);
+            PenInsideOwnRoom(player);
+        }
+        room.Touch();
+    }
+
+    private static void PenInsideOwnRoom(Player player)
+    {
+        var pen = Level.Rooms[player.SpawnIndex % Level.Rooms.Count];
+        // Inset by the wall thickness so a leader stops at the inside face of
+        // its room rather than standing in the masonry.
+        var inset = GameConstants.WallThickness + player.Leader.Radius;
+        var minX = pen.X + inset;
+        var maxX = pen.X + pen.Width - inset;
+        var minY = pen.Y + inset;
+        var maxY = pen.Y + pen.Height - inset;
+
+        var position = player.Leader.Position;
+        var clampedX = Math.Clamp(position.X, Math.Min(minX, maxX), Math.Max(minX, maxX));
+        var clampedY = Math.Clamp(position.Y, Math.Min(minY, maxY), Math.Max(minY, maxY));
+
+        if (clampedX != position.X || clampedY != position.Y)
+        {
+            player.Leader.Position = new Vector2(clampedX, clampedY);
+            player.Leader.Velocity = Vector2.Zero;
+        }
     }
 
     private void UpdateRoom(GameRoom room, float deltaSeconds)
