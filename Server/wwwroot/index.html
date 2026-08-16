@@ -119,26 +119,60 @@
         margin: auto;
       }
 
-      .controls {
-        background: var(--hud-bg);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        border-left: 4px solid var(--accent);
-        padding: 2rem;
-        /* Sci-Fi Cut Corner */
-        clip-path: polygon(
-          0 0,
-          100% 0,
-          100% calc(100% - 20px),
-          calc(100% - 20px) 100%,
-          0 100%
-        );
-        /* Use filter for shadow on clipped elements */
+      /* Selector carries .chamfered so these win over the shared defaults,
+         which are declared further down the sheet. */
+      .controls.chamfered {
+        --cut: 18px;
+        --edge: rgba(99, 168, 255, 0.55);
+        --fill: var(--hud-bg);
+        /* Shadow via filter, not box-shadow: a clipped element's box-shadow
+           traces the original rectangle and shows square corners. */
         filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
         width: 320px;
         display: flex;
         flex-direction: column;
         gap: 1.2rem;
+        padding: 2rem;
+      }
+
+      /* ---- Chamfered blocks --------------------------------------------
+         Every block in the reference has all four corners cut at 45 degrees,
+         with the outline following the cut. clip-path alone cannot do that: it
+         slices the border off along with the corner, leaving the diagonal bare.
+         So the element itself is the outline colour and carries the outer cut,
+         and its ::before is the fill with the same cut one pixel in. The gap
+         between the two reads as a border that turns the corner properly.
+
+         --cut sizes the chamfer, --edge is the line, --fill the interior. */
+      .chamfered {
         position: relative;
+        --cut: 14px;
+        --edge: rgba(34, 211, 238, 0.42);
+        --fill: rgba(11, 19, 32, 0.95);
+        background: var(--edge);
+        padding: 1px;
+        border: none;
+        clip-path: polygon(
+          var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut),
+          100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%,
+          var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut)
+        );
+      }
+      .chamfered::before {
+        content: "";
+        position: absolute;
+        inset: 1px;
+        z-index: 0;
+        background-color: var(--fill);
+        clip-path: polygon(
+          var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut),
+          100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%,
+          var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut)
+        );
+      }
+      .chamfered > * {
+        position: relative;
+        z-index: 1;
       }
 
       /* ---- Shared panel detailing -------------------------------------
@@ -160,13 +194,10 @@
       /* Scanlines and a faint column grid. This is most of what makes a dark
          panel read as a screen rather than a flat rectangle, and it costs two
          gradients — no image, no extra request. */
+      /* Rides on the fill layer the chamfer already creates — declaring its own
+         inset here would override the 1px gap that draws the border. */
       .controls::before,
       .victory-card::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        z-index: 0;
         background-image:
           repeating-linear-gradient(
             0deg,
@@ -407,9 +438,9 @@
         justify-content: space-between;
         gap: 1rem;
         padding: 0.35rem 0.9rem;
-        background: rgba(15, 23, 42, 0.9);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        border-top: none;
+        --cut: 12px;
+        --fill: rgba(15, 23, 42, 0.9);
+        margin-top: 4px;
         font-family: "Rajdhani", sans-serif;
         font-size: 0.92rem;
         font-weight: 700;
@@ -445,9 +476,8 @@
         gap: 2.2rem;
         padding: 0.5rem 1.1rem;
         margin-top: 0.5rem;
-        background: rgba(15, 23, 42, 0.9);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        border-bottom: 2px solid rgba(34, 211, 238, 0.45);
+        --cut: 12px;
+        --fill: rgba(15, 23, 42, 0.9);
         font-family: "Rajdhani", sans-serif;
       }
       .status-cell {
@@ -515,20 +545,16 @@
       /* The result panel. Bracketed corners and a hard edge, so it reads as a
          plate set into the scene rather than text floating over it. */
       .victory-card {
-        position: relative;
+        --cut: 20px;
+        --edge: rgba(34, 211, 238, 0.5);
+        --fill: rgba(8, 14, 27, 0.97);
         display: flex;
         flex-direction: column;
         align-items: center;
         text-align: center;
         padding: 4.6rem 3.4rem 2rem;
         min-width: 340px;
-        background: linear-gradient(180deg, rgba(10, 17, 32, 0.97), rgba(6, 11, 22, 0.97));
-        border: 1px solid rgba(34, 211, 238, 0.45);
-        box-shadow: 0 0 40px rgba(0, 0, 0, 0.7), inset 0 0 40px rgba(34, 211, 238, 0.06);
-        clip-path: polygon(
-          22px 0, 100% 0, 100% calc(100% - 22px),
-          calc(100% - 22px) 100%, 0 100%, 0 22px
-        );
+        filter: drop-shadow(0 0 34px rgba(0, 0, 0, 0.75));
       }
       .victory-card::before,
       .victory-card::after {
@@ -900,9 +926,8 @@
 
       /* Voice bar: player avatars + microphone toggle */
       .voice-bar {
-        background: rgba(15, 23, 42, 0.95);
-        border: 1px solid rgba(59, 130, 246, 0.3);
-        border-top: 2px solid var(--accent);
+        --cut: 12px;
+        --fill: rgba(15, 23, 42, 0.95);
         padding: 0.45rem 0.9rem;
         display: flex;
         align-items: center;
@@ -1262,7 +1287,7 @@
   </head>
   <body>
     <main>
-      <section class="controls">
+      <section class="controls chamfered">
         <span class="corner tl" aria-hidden="true"></span>
         <span class="corner tr" aria-hidden="true"></span>
         <span class="corner bl" aria-hidden="true"></span>
@@ -1346,7 +1371,7 @@
         </div>
       </section>
       <div class="game-column">
-        <div id="voiceBar" class="voice-bar">
+        <div id="voiceBar" class="voice-bar chamfered">
           <div id="avatarBar" class="avatar-bar"></div>
           <div id="scoreboard" class="scoreboard-hud"></div>
           <div class="voice-controls">
@@ -1377,7 +1402,7 @@
         </div>
         <!-- Scores on the left, room code on the right. Separate from the avatar
              strip above so the roster and the numbers each have room. -->
-        <div id="infoRow" class="info-row">
+        <div id="infoRow" class="info-row chamfered">
           <div id="scoreLine" class="score-line"></div>
           <div class="room-tag">Room: <strong id="roomTag">—</strong></div>
         </div>
@@ -1398,7 +1423,7 @@
             <div class="victory-wrap">
               <canvas id="victoryCrest" class="victory-crest"
                       width="132" height="132"></canvas>
-              <div id="overlayCard" class="victory-card">
+              <div id="overlayCard" class="victory-card chamfered">
                 <!-- Only the square corners get brackets. The other two are
                      chamfered, and stacking a bracket, the chamfer and the
                      inset hairline in one corner reads as clutter, not detail. -->
@@ -1412,7 +1437,7 @@
         </section>
         <!-- Standing readouts under the view: who is in, how long is left, and
              how good the connection is. -->
-        <div class="status-bar">
+        <div class="status-bar chamfered">
           <div class="status-cell">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" aria-hidden="true">
