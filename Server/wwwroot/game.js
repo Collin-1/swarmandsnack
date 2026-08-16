@@ -181,6 +181,9 @@
 
   function hideOverlay() {
     overlayEl.classList.add("hidden");
+    // The crest animates on its own rAF loop; a hidden overlay must not keep
+    // driving frames behind the game.
+    stopVictoryCrest();
   }
 
   function resetSnapshotPipeline() {
@@ -3005,9 +3008,13 @@
    * rather than a picture of one means it always matches whatever the creatures
    * currently look like.
    */
+  let crestRaf = null;
+
   function paintVictoryCrest(teamColor) {
     const crest = document.getElementById("victoryCrest");
     if (!crest) return;
+    stopVictoryCrest();
+
     // A draw has no winner, so there is no creature to crown.
     crest.classList.toggle("shown", !!teamColor);
     if (!teamColor) return;
@@ -3015,29 +3022,79 @@
     const colours = paletteFor(teamColor);
     const g = crest.getContext("2d");
     const half = crest.width / 2;
-    g.clearRect(0, 0, crest.width, crest.height);
-    g.save();
-    g.translate(half, half);
-    // Full plates, as if mid-hunt: this is the shape that just won.
-    const shell = shellSprite(colours.leader, true, EAT_TO_BECOME_SUPER, true);
+    // The ordinary armoured leader, not the Apex form: dark plates with lit
+    // slots. The Apex variant floods every plate white, which washed the
+    // winner's own colour out of the crest entirely.
+    const shell = shellSprite(colours.leader, true, 0, false);
     const orb = orbSprite(colours.leader, true);
     const k = (half * 0.86) / (SPRITE_BAKE_RADIUS * SPRITE_GLOW_SCALE);
-    g.scale(k, k);
-    g.drawImage(shell, -shell.width / 2, -shell.height / 2);
-    g.drawImage(orb, -orb.width / 2, -orb.height / 2);
-    g.restore();
-
-    // Eye, looking straight out at the player.
-    const orbR = half * 0.86 * (SPRITE_BAKE_RADIUS / (SPRITE_BAKE_RADIUS * SPRITE_GLOW_SCALE)) * ORB_RATIO;
+    const orbR = SPRITE_BAKE_RADIUS * k * ORB_RATIO;
     const eyeR = orbR * 0.46;
-    g.fillStyle = "rgba(3,8,18,0.5)";
-    g.beginPath(); g.arc(half, half, eyeR * 1.16, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#f4f8ff";
-    g.beginPath(); g.arc(half, half, eyeR, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "#0b1020";
-    g.beginPath(); g.arc(half, half, eyeR * 0.46, 0, Math.PI * 2); g.fill();
-    g.fillStyle = "rgba(255,255,255,0.62)";
-    g.beginPath(); g.arc(half - eyeR * 0.34, half - eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2); g.fill();
+    const started = performance.now();
+
+    const frame = (now) => {
+      const t = now - started;
+      g.clearRect(0, 0, crest.width, crest.height);
+
+      // Idle bob, and the armour ring turning slowly under it — the shell is a
+      // separate sprite from the orb, so it can rotate while the body stays
+      // upright and lit from the same direction.
+      const bob = Math.sin(t / 620) * 3.5;
+      const cx = half;
+      const cy = half + bob;
+
+      g.save();
+      g.translate(cx, cy);
+      g.rotate(t / 3400);
+      g.scale(k, k);
+      g.drawImage(shell, -shell.width / 2, -shell.height / 2);
+      g.restore();
+
+      g.save();
+      g.translate(cx, cy);
+      g.scale(k, k);
+      g.drawImage(orb, -orb.width / 2, -orb.height / 2);
+      g.restore();
+
+      // A blink every few seconds, so it reads as alive rather than a logo.
+      const cycle = t % 3800;
+      const blink = cycle > 3620 ? Math.min(1, (cycle - 3620) / 90) : 0;
+      const lidded = blink > 0 ? 1 - Math.abs(1 - blink * 2) : 0;
+      const openness = 1 - lidded;
+
+      g.fillStyle = "rgba(3,8,18,0.5)";
+      g.beginPath(); g.arc(cx, cy, eyeR * 1.16, 0, Math.PI * 2); g.fill();
+
+      if (openness > 0.05) {
+        g.save();
+        g.translate(cx, cy);
+        g.scale(1, openness);
+        g.fillStyle = "#f4f8ff";
+        g.beginPath(); g.arc(0, 0, eyeR, 0, Math.PI * 2); g.fill();
+        g.fillStyle = "#0b1020";
+        g.beginPath(); g.arc(0, 0, eyeR * 0.46, 0, Math.PI * 2); g.fill();
+        g.fillStyle = "rgba(255,255,255,0.62)";
+        g.beginPath();
+        g.arc(-eyeR * 0.34, -eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2);
+        g.fill();
+        g.restore();
+      } else {
+        // Closed: a dark seam where the eye was.
+        g.strokeStyle = "rgba(8,14,26,0.9)";
+        g.lineWidth = 2;
+        g.beginPath(); g.moveTo(cx - eyeR, cy); g.lineTo(cx + eyeR, cy); g.stroke();
+      }
+
+      crestRaf = requestAnimationFrame(frame);
+    };
+    crestRaf = requestAnimationFrame(frame);
+  }
+
+  function stopVictoryCrest() {
+    if (crestRaf !== null) {
+      cancelAnimationFrame(crestRaf);
+      crestRaf = null;
+    }
   }
 
   let lastScoreKey = null;
