@@ -140,13 +140,14 @@
   }
 
   /**
-   * Hides create/join while a room is in progress, and brings them back the
-   * moment it is over.
+   * Hides create/join while you are in a live room, and brings them back once
+   * the match is over so you can go somewhere else.
    *
-   * These two things have to be separate from the invite link. Tying them
-   * together meant the class was set when a room was entered and never cleared,
-   * because nothing ever set the invite link back to empty — so once a match
-   * finished, a player had no way to join a different game short of reloading.
+   * The caller derives this from state on every snapshot rather than flipping it
+   * on events. Two bugs came from doing it the other way: hanging it off the
+   * invite link meant it was set on entering a room and never cleared, and
+   * flipping it on GameOver meant a rematch left the controls on screen for the
+   * whole next match.
    */
   function setRoomControls(inRoom) {
     document.body.classList.toggle("in-room", !!inRoom);
@@ -243,7 +244,6 @@
       lobbyCount = 1;
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
-      setRoomControls(true);
       hideOverlay();
       updateStatusFromState(serverState);
     });
@@ -257,7 +257,6 @@
       serverState = createEmptyState();
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
-      setRoomControls(true);
       hideOverlay();
       updateStatusFromState(serverState);
       connection.invoke("RequestState").catch(console.error);
@@ -401,10 +400,6 @@
 
       // Ensure state reflects game over so movement stops (truthy sentinel for a draw).
       serverState.winnerId = payload.winnerId || "__draw__";
-
-      // The match is finished, so joining a different game is a reasonable thing
-      // to want. Bring create/join and the room code field back.
-      setRoomControls(false);
 
       GameAudio.playTrack("victory");
 
@@ -642,6 +637,12 @@
 
     lobbyCount = state.players?.length ?? lobbyCount;
     const inLobby = !state.isActive && !state.winnerId;
+
+    // Derived from state every snapshot rather than toggled on individual
+    // events. Event-driven, this kept going stale: a rematch fires MatchStarted
+    // but never JoinedGame, so once a finished match had revealed the controls
+    // they stayed on screen through the whole next game.
+    setRoomControls(!!roomId && !state.winnerId);
 
     setPlayingLayout(!!state.isActive);
     updateMatchClock(state);
