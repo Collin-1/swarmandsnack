@@ -62,6 +62,11 @@
   const minimapCanvas = document.getElementById("minimap");
   const matchClockEl = document.getElementById("matchClock");
   const phaseBannerEl = document.getElementById("phaseBanner");
+  const scoreLineEl = document.getElementById("scoreLine");
+  const roomTagEl = document.getElementById("roomTag");
+  const statPlayersEl = document.getElementById("statPlayers");
+  const statTimeEl = document.getElementById("statTime");
+  const statPingEl = document.getElementById("statPing");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -643,6 +648,8 @@
     // but never JoinedGame, so once a finished match had revealed the controls
     // they stayed on screen through the whole next game.
     setRoomControls(!!roomId && !state.winnerId);
+    updateInfoRow(state);
+    updateStatusBar(state);
 
     setPlayingLayout(!!state.isActive);
     updateMatchClock(state);
@@ -2992,6 +2999,66 @@
     panelToggle.addEventListener("click", () => {
       document.body.classList.toggle("panel-open");
     });
+  }
+
+  let lastScoreKey = null;
+  let lastStatusKey = null;
+
+  // Scores on the left of the info row, in each player's own colour. Dead
+  // players stay listed but greyed, so the field's shape stays readable.
+  function updateInfoRow(state) {
+    if (roomTagEl && roomTagEl.textContent !== (roomId || "—")) {
+      roomTagEl.textContent = roomId || "—";
+    }
+    if (!scoreLineEl) return;
+
+    const players = state.players ?? [];
+    const key = players.map((p) => `${p.displayName}:${p.eaten}:${p.isDead}:${p.isSuper}`).join("|");
+    if (key === lastScoreKey) return;
+    lastScoreKey = key;
+
+    scoreLineEl.innerHTML = "";
+    players.forEach((player, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "|";
+        scoreLineEl.appendChild(sep);
+      }
+      const span = document.createElement("span");
+      const colours = paletteFor(player.teamColor);
+      span.style.color = player.isDead ? "#475569" : colours.leader;
+      const mark = player.isSuper ? " ⚡" : player.isDead ? " ✕" : "";
+      span.textContent = `${player.displayName}: ${player.eaten ?? 0}${mark}`;
+      scoreLineEl.appendChild(span);
+    });
+  }
+
+  function updateStatusBar(state) {
+    const players = state.players ?? [];
+    const alive = players.filter((p) => !p.isDead).length;
+    const playersText = `${alive} / ${players.length || 0}`;
+
+    // Match time is the hunt clock while hunting; gathering has no deadline, so
+    // it shows the round instead of a countdown that is not counting.
+    let timeText;
+    if (!state.isActive) {
+      timeText = "--:--";
+    } else if (state.phase === "hunting") {
+      const left = Math.max(0, Math.ceil(state.huntSecondsRemaining ?? 0));
+      timeText = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    } else {
+      timeText = `Round ${state.roundNumber ?? 1}`;
+    }
+
+    const pingText = currentLatency > 0 ? `${Math.round(currentLatency * 1000)}ms` : "—";
+
+    const key = `${playersText}|${timeText}|${pingText}`;
+    if (key === lastStatusKey) return;
+    lastStatusKey = key;
+    if (statPlayersEl) statPlayersEl.textContent = playersText;
+    if (statTimeEl) statTimeEl.textContent = timeText;
+    if (statPingEl) statPingEl.textContent = pingText;
   }
 
   let lastClockText = null;

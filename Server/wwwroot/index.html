@@ -30,9 +30,12 @@
         // only the game column remains, which is both narrower and shorter.
         // Measuring against the wrong one would shrink the match view for a
         // panel that is not on screen.
+        // Measured, not guessed. The info row and the status bar under the view
+        // added 75px, so the match height went from 780 to 858; fitting against
+        // the old number would have pushed the bottom bar off screen.
         var DESIGN = {
-          lobby: { w: 1378, h: 869 },
-          match: { w: 1026, h: 780 },
+          lobby: { w: 1378, h: 858 },
+          match: { w: 1026, h: 858 },
         };
         var DESIGN_W = DESIGN.lobby.w;
         var DESIGN_H = DESIGN.lobby.h;
@@ -138,16 +141,91 @@
         position: relative;
       }
 
-      /* Decorative tech line */
-      .controls::before {
+      /* Corner brackets. Drawn as two borders on a pseudo-element rather than a
+         full frame, so the panel reads as bracketed rather than boxed — magenta
+         at the top left, cyan at the bottom right. */
+      .controls::before,
+      .controls::after {
         content: "";
         position: absolute;
-        top: 10px;
-        right: 10px;
+        width: 26px;
+        height: 26px;
+        pointer-events: none;
+      }
+      .controls::before {
+        top: 8px;
+        left: 8px;
+        border-top: 2px solid var(--primary);
+        border-left: 2px solid var(--primary);
+      }
+      /* Bottom LEFT, not right: the panel's clip-path notches the bottom-right
+         corner, so a bracket placed there is sliced in half. */
+      .controls::after {
+        bottom: 8px;
+        left: 8px;
+        border-bottom: 2px solid var(--accent);
+        border-left: 2px solid var(--accent);
+      }
+
+      /* Fields carry a glyph in a bordered gutter, so a row reads as a labelled
+         slot rather than a bare input. */
+      .field {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+      }
+      .field-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
         width: 40px;
-        height: 4px;
+        flex: 0 0 40px;
+        border: 1px solid #334155;
+        border-right: none;
+        background: rgba(0, 0, 0, 0.35);
+        color: var(--accent);
+        font-size: 1rem;
+      }
+      .field input {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .panel-footer {
+        margin-top: auto;
+        padding-top: 0.9rem;
+        border-top: 1px solid rgba(59, 130, 246, 0.25);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.64rem;
+        letter-spacing: 1.4px;
+        text-transform: uppercase;
+        color: #64748b;
+        white-space: nowrap;
+      }
+      .panel-footer .dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 1px solid var(--accent);
+        display: inline-block;
+        position: relative;
+        flex: 0 0 auto;
+      }
+      .panel-footer .dot::after {
+        content: "";
+        position: absolute;
+        inset: 3px;
+        border-radius: 50%;
         background: var(--accent);
-        opacity: 0.5;
+        opacity: 0.7;
+      }
+      .panel-footer .ticks {
+        margin-left: auto;
+        letter-spacing: 3px;
+        color: var(--accent);
+        opacity: 0.6;
       }
 
       h1 {
@@ -165,82 +243,10 @@
         filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.5));
       }
 
-      h1::before,
-      h1::after {
-        content: attr(data-text);
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        opacity: 1;
-      }
+      /* The title used to run two glitch layers on infinite loops. It is a
+         static wordmark now — it sits beside a canvas that is already busy, and
+         a permanently juddering heading fights it for attention. */
 
-      h1::before {
-        color: #ffffff;
-        z-index: -1;
-        animation: glitch-anim-1 2.5s infinite linear alternate-reverse;
-      }
-
-      h1::after {
-        color: #facc15;
-        z-index: -2;
-        animation: glitch-anim-2 2s infinite linear alternate-reverse;
-      }
-
-      @keyframes glitch-anim-1 {
-        0% {
-          clip-path: inset(20% 0 80% 0);
-          transform: translate(-4px, 2px);
-        }
-        20% {
-          clip-path: inset(60% 0 10% 0);
-          transform: translate(4px, -2px);
-        }
-        40% {
-          clip-path: inset(40% 0 50% 0);
-          transform: translate(-4px, 4px);
-        }
-        60% {
-          clip-path: inset(80% 0 5% 0);
-          transform: translate(4px, -4px);
-        }
-        80% {
-          clip-path: inset(10% 0 70% 0);
-          transform: translate(-2px, 2px);
-        }
-        100% {
-          clip-path: inset(30% 0 20% 0);
-          transform: translate(2px, -2px);
-        }
-      }
-
-      @keyframes glitch-anim-2 {
-        0% {
-          clip-path: inset(10% 0 60% 0);
-          transform: translate(4px, 2px);
-        }
-        20% {
-          clip-path: inset(30% 0 20% 0);
-          transform: translate(-4px, -2px);
-        }
-        40% {
-          clip-path: inset(70% 0 10% 0);
-          transform: translate(4px, 4px);
-        }
-        60% {
-          clip-path: inset(20% 0 50% 0);
-          transform: translate(-4px, -4px);
-        }
-        80% {
-          clip-path: inset(50% 0 30% 0);
-          transform: translate(2px, 2px);
-        }
-        100% {
-          clip-path: inset(5% 0 80% 0);
-          transform: translate(-2px, -2px);
-        }
-      }
       .tagline {
         color: #94a3b8;
         margin-bottom: 1rem;
@@ -311,10 +317,29 @@
         box-shadow: 0 0 15px var(--accent);
       }
 
+      /* Icons sit inside the buttons, so each action is identifiable before the
+         label is read. */
+      button svg {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+      }
+      .buttons button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        line-height: 1.15;
+        font-size: 0.82rem;
+      }
+
+      /* Create is the committed action and carries the magenta fill; join is the
+         quieter cyan outline beside it. */
       #createBtn {
         border-color: var(--primary);
-        color: var(--primary);
-        background: rgba(244, 63, 94, 0.15);
+        color: #ffe4ec;
+        background: rgba(244, 63, 94, 0.28);
+        box-shadow: inset 0 0 18px rgba(244, 63, 94, 0.25);
       }
       #createBtn:hover {
         background: var(--primary);
@@ -322,8 +347,86 @@
         box-shadow: 0 0 15px var(--primary);
       }
 
-      #joinBtn {
-        /* Default styles apply */
+      #howToPlayBtn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+      }
+
+      /* Scores left, room code right. */
+      .info-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.35rem 0.9rem;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-top: none;
+        font-family: "Rajdhani", sans-serif;
+        font-size: 0.92rem;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        min-height: 1.9rem;
+      }
+      .score-line {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .score-line .sep {
+        color: #334155;
+        font-weight: 400;
+      }
+      .room-tag {
+        color: #64748b;
+        white-space: nowrap;
+        font-size: 0.8rem;
+      }
+      .room-tag strong {
+        color: var(--accent);
+        letter-spacing: 2px;
+      }
+
+      /* Standing readouts under the view. */
+      .status-bar {
+        display: flex;
+        align-items: center;
+        gap: 2.2rem;
+        padding: 0.5rem 1.1rem;
+        margin-top: 0.5rem;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-bottom: 2px solid rgba(34, 211, 238, 0.45);
+        font-family: "Rajdhani", sans-serif;
+      }
+      .status-cell {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .status-cell svg {
+        width: 17px;
+        height: 17px;
+        color: var(--accent);
+        opacity: 0.85;
+        flex: 0 0 auto;
+      }
+      .status-label {
+        font-size: 0.66rem;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: #64748b;
+      }
+      .status-value {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: 1px;
       }
 
       .game-area {
@@ -880,27 +983,63 @@
         </p>
         <div class="form-row">
           <label for="displayName">Name</label>
-          <input
-            id="displayName"
-            type="text"
-            maxlength="20"
-            placeholder="Optional"
-          />
+          <div class="field">
+            <span class="field-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+                   stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <circle cx="12" cy="8" r="3.5" />
+                <path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" />
+              </svg>
+            </span>
+            <input
+              id="displayName"
+              type="text"
+              maxlength="20"
+              placeholder="Optional"
+            />
+          </div>
         </div>
         <div class="form-row" id="roomCodeRow">
           <label for="roomCode">Room Code</label>
-          <input
-            id="roomCode"
-            type="text"
-            maxlength="6"
-            placeholder="Enter invite code"
-          />
+          <div class="field">
+            <span class="field-icon" aria-hidden="true">#</span>
+            <input
+              id="roomCode"
+              type="text"
+              maxlength="6"
+              placeholder="Enter invite code"
+            />
+          </div>
         </div>
         <div class="buttons">
-          <button id="createBtn">Create Game</button>
-          <button id="joinBtn">Join Game</button>
+          <button id="createBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <circle cx="9" cy="8" r="3.2" />
+              <path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" />
+              <path d="M18 8v6M21 11h-6" />
+            </svg>
+            Create Game
+          </button>
+          <button id="joinBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                 aria-hidden="true">
+              <path d="M4 12h13" />
+              <path d="M13 7l5 5-5 5" />
+            </svg>
+            Join Game
+          </button>
         </div>
-        <button id="howToPlayBtn">HOW TO PLAY</button>
+        <button id="howToPlayBtn">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 5.5h6a3 3 0 0 1 3 3v10a2.5 2.5 0 0 0-2.5-2.5H3z" />
+            <path d="M21 5.5h-6a3 3 0 0 0-3 3v10a2.5 2.5 0 0 1 2.5-2.5H21z" />
+          </svg>
+          HOW TO PLAY
+        </button>
         <button id="startBtn" style="display: none">Start Match</button>
         <p id="status" class="status">Connecting…</p>
         <div id="inviteSection" class="form-row" style="display: none">
@@ -909,6 +1048,11 @@
             <input id="inviteLinkInput" type="text" readonly />
             <button id="copyInviteBtn">Copy</button>
           </div>
+        </div>
+        <div class="panel-footer">
+          <span class="dot" aria-hidden="true"></span>
+          Orbital Dock · Sector 7
+          <span class="ticks" aria-hidden="true">—— —</span>
         </div>
       </section>
       <div class="game-column">
@@ -936,9 +1080,12 @@
                    aria-label="Game volume" title="Game volume" />
           </div>
         </div>
-        <!-- The scoreboard moved up into the HUD bar. It used to be a second
-             stacked strip, and those two rows were 40px of the height that
-             forced the whole page to scale down on a 768-tall laptop. -->
+        <!-- Scores on the left, room code on the right. Separate from the avatar
+             strip above so the roster and the numbers each have room. -->
+        <div id="infoRow" class="info-row">
+          <div id="scoreLine" class="score-line"></div>
+          <div class="room-tag">Room: <strong id="roomTag">—</strong></div>
+        </div>
         <section class="game-area">
           <canvas id="gameCanvas" width="960" height="640"></canvas>
           <!-- What the game wants from you right now. The rules change
@@ -950,6 +1097,37 @@
             <button id="restartBtn">Play Again</button>
           </div>
         </section>
+        <!-- Standing readouts under the view: who is in, how long is left, and
+             how good the connection is. -->
+        <div class="status-bar">
+          <div class="status-cell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="9" cy="8" r="3" />
+              <path d="M3 20c0-3.2 2.7-5.3 6-5.3s6 2.1 6 5.3" />
+              <path d="M16.5 5.6a3 3 0 0 1 0 5.3M19 20c0-2.6-.9-4.3-2.4-5.2" />
+            </svg>
+            <span class="status-label">Players</span>
+            <span class="status-value" id="statPlayers">0 / 8</span>
+          </div>
+          <div class="status-cell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.5V12l3 2" />
+            </svg>
+            <span class="status-label">Match Time</span>
+            <span class="status-value" id="statTime">--:--</span>
+          </div>
+          <div class="status-cell">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" aria-hidden="true">
+              <path d="M5 19v-4M10 19v-8M15 19v-11M20 19v-14" />
+            </svg>
+            <span class="status-label">Ping</span>
+            <span class="status-value" id="statPing">—</span>
+          </div>
+        </div>
       </div>
       <div id="mobileControls" class="mobile-controls">
         <button id="btnUp" class="dpad-btn" data-dir="up">▲</button>
