@@ -54,6 +54,7 @@
   const micIconEl = document.getElementById("micIcon");
   const micLabelEl = document.getElementById("micLabel");
   const voiceStatusEl = document.getElementById("voiceStatus");
+  const voiceWaveEl = document.getElementById("voiceWave");
   const audioBtn = document.getElementById("audioBtn");
   const audioIconEl = document.getElementById("audioIcon");
   const audioVolumeEl = document.getElementById("audioVolume");
@@ -2616,6 +2617,8 @@
     }
     // Playback blocked outranks the mic state: the player is silently deaf and
     // any click fixes it, so tell them that rather than "Mic live".
+    if (voiceWaveEl) voiceWaveEl.classList.toggle("live", live);
+
     const status = VoiceClient.isAudioBlocked()
       ? "Click to enable sound"
       : VoiceClient.getStatus();

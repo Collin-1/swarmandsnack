@@ -141,32 +141,68 @@
         position: relative;
       }
 
-      /* Corner brackets. Drawn as two borders on a pseudo-element rather than a
-         full frame, so the panel reads as bracketed rather than boxed — magenta
-         at the top left, cyan at the bottom right. */
-      .controls::before,
-      .controls::after {
-        content: "";
+      /* ---- Shared panel detailing -------------------------------------
+         Corner brackets are real elements, not pseudo-elements: a pseudo pair
+         only gets you two corners and the reference has four. Magenta on the
+         leading corners, cyan on the trailing ones. */
+      .corner {
         position: absolute;
         width: 26px;
         height: 26px;
         pointer-events: none;
+        z-index: 3;
       }
-      .controls::before {
-        top: 8px;
-        left: 8px;
-        border-top: 2px solid var(--primary);
-        border-left: 2px solid var(--primary);
-      }
-      /* Bottom LEFT, not right: the panel's clip-path notches the bottom-right
-         corner, so a bracket placed there is sliced in half. */
-      .controls::after {
-        bottom: 8px;
-        left: 8px;
-        border-bottom: 2px solid var(--accent);
-        border-left: 2px solid var(--accent);
+      .corner.tl { top: 8px; left: 8px;  border-top: 2px solid var(--primary); border-left: 2px solid var(--primary); }
+      .corner.tr { top: 8px; right: 8px; border-top: 2px solid var(--accent);  border-right: 2px solid var(--accent); }
+      .corner.bl { bottom: 8px; left: 8px;  border-bottom: 2px solid var(--accent);  border-left: 2px solid var(--accent); }
+      .corner.br { bottom: 8px; right: 8px; border-bottom: 2px solid var(--primary); border-right: 2px solid var(--primary); }
+
+      /* Scanlines and a faint column grid. This is most of what makes a dark
+         panel read as a screen rather than a flat rectangle, and it costs two
+         gradients — no image, no extra request. */
+      .controls::before,
+      .victory-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image:
+          repeating-linear-gradient(
+            0deg,
+            rgba(148, 197, 255, 0.05) 0px,
+            rgba(148, 197, 255, 0.05) 1px,
+            transparent 1px,
+            transparent 4px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            rgba(148, 197, 255, 0.028) 0px,
+            rgba(148, 197, 255, 0.028) 1px,
+            transparent 1px,
+            transparent 46px
+          );
       }
 
+      /* A hairline set in from the edge, so the frame reads as double-walled. */
+      .controls::after,
+      .victory-card::after {
+        content: "";
+        position: absolute;
+        inset: 7px;
+        pointer-events: none;
+        z-index: 1;
+        border: 1px solid rgba(34, 211, 238, 0.13);
+      }
+
+      /* Panel content has to sit above the texture and the inset frame. The
+         corners are excluded: they are absolutely positioned, and this rule
+         would knock them back to relative and scatter them into the flow. */
+      .controls > *:not(.corner),
+      .victory-card > *:not(.corner) {
+        position: relative;
+        z-index: 2;
+      }
       /* Fields carry a glyph in a bordered gutter, so a row reads as a labelled
          slot rather than a bare input. */
       /* A separate glyph tile beside the field, not fused to it — joined, the
@@ -515,9 +551,42 @@
         border-left: 2px solid var(--accent);
       }
 
+      .victory-card .corner {
+        width: 32px;
+        height: 32px;
+      }
+      .victory-card .corner.tr { top: 12px; right: 12px; }
+      .victory-card .corner.bl { bottom: 12px; left: 12px; }
+
       .victory-wrap {
         position: relative;
         display: inline-block;
+      }
+
+      /* A pool of light under the crest, so the creature looks lit from behind
+         rather than pasted on. Sits under the canvas and over the card. */
+      .victory-wrap::before {
+        content: "";
+        position: absolute;
+        top: -108px;
+        left: 50%;
+        width: 230px;
+        height: 230px;
+        transform: translateX(-50%);
+        border-radius: 50%;
+        background: radial-gradient(
+          circle,
+          rgba(34, 211, 238, 0.3) 0%,
+          rgba(34, 211, 238, 0.1) 42%,
+          rgba(34, 211, 238, 0) 68%
+        );
+        pointer-events: none;
+        z-index: 1;
+        opacity: 0;
+        transition: opacity 0.4s ease-out 0.2s;
+      }
+      .overlay:not(.hidden) .victory-wrap::before {
+        opacity: 1;
       }
 
       /* The winner's creature, straddling the top edge of the card. Overrides
@@ -865,6 +934,34 @@
         gap: 2px;
         flex: 0 0 auto;
       }
+      .voice-wave {
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 14px;
+      }
+      .voice-wave i {
+        display: block;
+        width: 2px;
+        height: 4px;
+        background: var(--accent);
+        opacity: 0.4;
+      }
+      /* Only animates when someone is actually transmitting; a meter that jiggles
+         with every mic off is noise pretending to be information. */
+      .voice-wave.live i {
+        opacity: 0.95;
+        animation: waveBar 0.9s ease-in-out infinite alternate;
+      }
+      .voice-wave.live i:nth-child(2) { animation-delay: 0.12s; }
+      .voice-wave.live i:nth-child(3) { animation-delay: 0.24s; }
+      .voice-wave.live i:nth-child(4) { animation-delay: 0.36s; }
+      .voice-wave.live i:nth-child(5) { animation-delay: 0.48s; }
+      @keyframes waveBar {
+        from { height: 3px; }
+        to   { height: 13px; }
+      }
+
       .avatar-disc {
         position: relative;
         width: 38px;
@@ -1166,7 +1263,10 @@
   <body>
     <main>
       <section class="controls">
-        <h1 data-text="Swarm and Snack">Swarm and Snack</h1>
+        <span class="corner tl" aria-hidden="true"></span>
+        <span class="corner tr" aria-hidden="true"></span>
+        <span class="corner bl" aria-hidden="true"></span>
+        <h1>Swarm and Snack</h1>
         <p class="tagline">
           Up to 8-player free-for-all in a multi-room world — every player
           gets their own room. Share the code, then the host starts.
@@ -1258,6 +1358,11 @@
               <span id="panelToggleCode">ROOM</span>
             </button>
             <span id="voiceStatus" class="voice-status">Voice off</span>
+            <!-- Level meter beside the voice status, as in the reference. Bars
+                 animate only while a mic is actually live. -->
+            <span id="voiceWave" class="voice-wave" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i>
+            </span>
             <button id="micBtn" class="mic-btn" type="button">
               <span id="micIcon">🎤</span><span id="micLabel">Enable Mic</span>
             </button>
@@ -1294,6 +1399,11 @@
               <canvas id="victoryCrest" class="victory-crest"
                       width="132" height="132"></canvas>
               <div id="overlayCard" class="victory-card">
+                <!-- Only the square corners get brackets. The other two are
+                     chamfered, and stacking a bracket, the chamfer and the
+                     inset hairline in one corner reads as clutter, not detail. -->
+                <span class="corner tr" aria-hidden="true"></span>
+                <span class="corner bl" aria-hidden="true"></span>
                 <div id="overlayMessage"></div>
                 <button id="restartBtn">Play Again</button>
               </div>
