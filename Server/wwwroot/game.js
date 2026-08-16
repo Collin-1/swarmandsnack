@@ -424,21 +424,19 @@
           ? "Everyone was devoured at once!"
           : "Match complete!";
 
+      // A contained card rather than a full-bleed wash, with the winner's own
+      // creature sitting over its top edge — the result should look like a
+      // trophy plate, not a message printed across the game.
       const html = `
-        <div style="text-align: center;">
-            <h1 class="victory-title" style="--winner-color: ${winnerColor};" data-text="${titleText}">
-                ${titleText}
-            </h1>
-            <p style="font-size: 1.5rem; color: #cbd5e1; margin: 0;">
-                ${bodyText}
-            </p>
-            ${isHost ? "" : `<p style="color:#94a3b8; margin-top:1rem;">Waiting for the host to start a rematch…</p>`}
-        </div>
+        <h1 class="victory-title" style="--winner-color: ${winnerColor};">${titleText}</h1>
+        <p class="victory-sub">${bodyText}</p>
+        ${isHost ? "" : `<p class="victory-note">Waiting for the host to start a rematch…</p>`}
       `;
 
       // Only the host can trigger a rematch.
       if (restartBtn) restartBtn.style.display = isHost ? "" : "none";
       showOverlay(html, true);
+      paintVictoryCrest(winner ? winner.teamColor : null);
     });
 
     connection.on("MatchStarted", () => {
@@ -2999,6 +2997,47 @@
     panelToggle.addEventListener("click", () => {
       document.body.classList.toggle("panel-open");
     });
+  }
+
+  /**
+   * Draws the winner's own creature onto the victory card, reusing the same
+   * baked shell and orb the game renders. Building it from the real sprites
+   * rather than a picture of one means it always matches whatever the creatures
+   * currently look like.
+   */
+  function paintVictoryCrest(teamColor) {
+    const crest = document.getElementById("victoryCrest");
+    if (!crest) return;
+    // A draw has no winner, so there is no creature to crown.
+    crest.classList.toggle("shown", !!teamColor);
+    if (!teamColor) return;
+
+    const colours = paletteFor(teamColor);
+    const g = crest.getContext("2d");
+    const half = crest.width / 2;
+    g.clearRect(0, 0, crest.width, crest.height);
+    g.save();
+    g.translate(half, half);
+    // Full plates, as if mid-hunt: this is the shape that just won.
+    const shell = shellSprite(colours.leader, true, EAT_TO_BECOME_SUPER, true);
+    const orb = orbSprite(colours.leader, true);
+    const k = (half * 0.86) / (SPRITE_BAKE_RADIUS * SPRITE_GLOW_SCALE);
+    g.scale(k, k);
+    g.drawImage(shell, -shell.width / 2, -shell.height / 2);
+    g.drawImage(orb, -orb.width / 2, -orb.height / 2);
+    g.restore();
+
+    // Eye, looking straight out at the player.
+    const orbR = half * 0.86 * (SPRITE_BAKE_RADIUS / (SPRITE_BAKE_RADIUS * SPRITE_GLOW_SCALE)) * ORB_RATIO;
+    const eyeR = orbR * 0.46;
+    g.fillStyle = "rgba(3,8,18,0.5)";
+    g.beginPath(); g.arc(half, half, eyeR * 1.16, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#f4f8ff";
+    g.beginPath(); g.arc(half, half, eyeR, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#0b1020";
+    g.beginPath(); g.arc(half, half, eyeR * 0.46, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(255,255,255,0.62)";
+    g.beginPath(); g.arc(half - eyeR * 0.34, half - eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2); g.fill();
   }
 
   let lastScoreKey = null;
