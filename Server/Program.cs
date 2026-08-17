@@ -22,13 +22,22 @@ builder.Services.AddCors(options =>
                 .AllowAnyMethod()
                 .AllowCredentials();
         }
-        else
+        else if (builder.Environment.IsDevelopment())
         {
+            // Loopback only, so a second dev server or a file:// harness can talk
+            // to the hub without opening the door to the whole internet.
             policy.AllowAnyHeader()
                 .AllowAnyMethod()
                 .AllowCredentials()
-                .SetIsOriginAllowed(_ => true);
+                .SetIsOriginAllowed(origin =>
+                    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback);
         }
+        // Otherwise: no cross-origin access at all. The server hosts its own
+        // client from wwwroot, so same-origin play needs no CORS policy — and the
+        // previous default here reflected *any* origin back with
+        // AllowCredentials, which lets any page on the web drive a logged-in
+        // player's hub connection. Set GAME_CLIENT_ORIGINS to a semicolon-
+        // separated list to host the client somewhere else.
     });
 });
 

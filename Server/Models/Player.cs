@@ -2,11 +2,13 @@ namespace SwarmAndSnack.Server.Models;
 
 public class Player
 {
+    public const int MaxNameLength = 16;
+
     public Player(string connectionId, string teamColor, string displayName)
     {
         ConnectionId = connectionId;
         TeamColor = teamColor;
-        DisplayName = string.IsNullOrWhiteSpace(displayName) ? teamColor : displayName;
+        DisplayName = SanitiseName(displayName) ?? teamColor;
         Leader = new Leader(connectionId, Vector2.Zero, Vector2.Zero, teamColor);
         Underlings = new List<Underling>();
     }
@@ -22,9 +24,38 @@ public class Player
 
     public void Rename(string? displayName)
     {
-        if (string.IsNullOrWhiteSpace(displayName)) return;
-        DisplayName = displayName.Trim();
+        var clean = SanitiseName(displayName);
+        if (clean is null) return;
+        DisplayName = clean;
     }
+
+    /// <summary>
+    /// Names are shown to every other player, so they are constrained here at
+    /// the only place they enter the game rather than trusted from the client.
+    /// The input's maxlength is decoration — any hub client bypasses it, and a
+    /// 2000-character name with markup in it was accepted verbatim before this.
+    /// Returns null when nothing usable survives, leaving the current name.
+    /// </summary>
+    public static string? SanitiseName(string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName)) return null;
+
+        var builder = new System.Text.StringBuilder(MaxNameLength);
+        foreach (var ch in displayName.Trim())
+        {
+            if (builder.Length >= MaxNameLength) break;
+            // An allow-list, not a block-list: anything not named here cannot
+            // reach another player's screen, whatever it is.
+            if (char.IsLetterOrDigit(ch) || ch is ' ' or '-' or '_' or '.')
+            {
+                builder.Append(ch);
+            }
+        }
+
+        var result = builder.ToString().Trim();
+        return result.Length == 0 ? null : result;
+    }
+
     public Leader Leader { get; }
     public List<Underling> Underlings { get; }
     public Direction PendingDirection { get; set; } = Direction.None;

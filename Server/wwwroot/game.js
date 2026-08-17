@@ -47,7 +47,6 @@
   const rulesModal = document.getElementById("rulesModal");
   const closeRulesBtn = document.getElementById("closeRulesBtn");
   const mobileControls = document.getElementById("mobileControls");
-  const scoreboardEl = document.getElementById("scoreboard");
   const startBtn = document.getElementById("startBtn");
   const avatarBarEl = document.getElementById("avatarBar");
   const micBtn = document.getElementById("micBtn");
@@ -171,11 +170,20 @@
     roomCodeInput.value = code;
   }
 
-  function showOverlay(content, isHtml = false) {
-    if (isHtml) {
-      overlayMessageEl.innerHTML = content;
-    } else {
+  /**
+   * `content` is either a plain string or a list of elements to mount. There is
+   * deliberately no markup path: the only rich overlay is the victory card, and
+   * it interpolates a player-supplied display name. Building it out of nodes
+   * means a name can never be anything but text on screen.
+   */
+  function showOverlay(content) {
+    overlayMessageEl.replaceChildren();
+    if (typeof content === "string") {
       overlayMessageEl.textContent = content;
+    } else {
+      for (const node of [].concat(content)) {
+        if (node) overlayMessageEl.appendChild(node);
+      }
     }
     overlayEl.classList.remove("hidden");
   }
@@ -422,24 +430,39 @@
         setStatus(isDraw ? "Game Over! It's a draw." : "Game Over!");
       }
 
-      const bodyText = winner
-        ? `<strong style="color:${winnerColor}; text-shadow: 0 0 10px ${winnerColor};">${winner.displayName || winner.teamColor}</strong> devoured the swarm!`
-        : isDraw
-          ? "Everyone was devoured at once!"
-          : "Match complete!";
-
       // A contained card rather than a full-bleed wash, with the winner's own
       // creature sitting over its top edge — the result should look like a
       // trophy plate, not a message printed across the game.
-      const html = `
-        <h1 class="victory-title" style="--winner-color: ${winnerColor};">${titleText}</h1>
-        <p class="victory-sub">${bodyText}</p>
-        ${isHost ? "" : `<p class="victory-note">Waiting for the host to start a rematch…</p>`}
-      `;
+      const title = document.createElement("h1");
+      title.className = "victory-title";
+      title.style.setProperty("--winner-color", winnerColor);
+      title.textContent = titleText;
+
+      const sub = document.createElement("p");
+      sub.className = "victory-sub";
+      if (winner) {
+        // The name is the one piece of this card that a player controls, so it
+        // goes in as text. Built as markup, a display name of
+        // `<img src=x onerror=…>` ran on every other player's machine.
+        const nameEl = document.createElement("strong");
+        nameEl.style.color = winnerColor;
+        nameEl.style.textShadow = `0 0 10px ${winnerColor}`;
+        nameEl.textContent = winner.displayName || winner.teamColor;
+        sub.append(nameEl, " devoured the swarm!");
+      } else {
+        sub.textContent = isDraw ? "Everyone was devoured at once!" : "Match complete!";
+      }
+
+      let note = null;
+      if (!isHost) {
+        note = document.createElement("p");
+        note.className = "victory-note";
+        note.textContent = "Waiting for the host to start a rematch…";
+      }
 
       // Only the host can trigger a rematch.
       if (restartBtn) restartBtn.style.display = isHost ? "" : "none";
-      showOverlay(html, true);
+      showOverlay([title, sub, note]);
       paintVictoryCrest(winner ? winner.teamColor : null);
     });
 
@@ -1558,7 +1581,6 @@
     drawOffscreenMarkers(renderState);
     drawMinimap(renderState);
 
-    drawScoreboard(renderState);
     // Avatars follow the newest roster rather than the delayed render state.
     drawAvatars(serverState);
   }
@@ -2471,28 +2493,6 @@
       ctx.stroke();
     }
     ctx.restore();
-  }
-
-  let lastScoreboardHtml = null;
-
-  function drawScoreboard(state) {
-    if (!scoreboardEl) return;
-    let html = "";
-    if (state && state.players && state.players.length > 0) {
-      html = state.players
-        .map((player) => {
-          const color = paletteFor(player.teamColor).leader;
-          const name = player.displayName || player.teamColor;
-          const remaining = player.underlings?.length ?? 0;
-          return `<span style="color:${color};text-shadow:0 0 8px ${color}80">${name}: <strong>${remaining}</strong></span>`;
-        })
-        .join("");
-    }
-    // Runs every animation frame; only touch the DOM when the content changes.
-    if (html !== lastScoreboardHtml) {
-      lastScoreboardHtml = html;
-      scoreboardEl.innerHTML = html;
-    }
   }
 
   // ---- Voice roster + avatars -------------------------------------------

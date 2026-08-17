@@ -1102,14 +1102,6 @@
         box-shadow: none;
       }
 
-      /* Gone. It listed every player's name and count beside an avatar strip
-         that showed the same players, so the roster appeared twice and the
-         avatars were squeezed into a scrollbar to make room for it. The avatars
-         carry the name and the count on their own. */
-      .scoreboard-hud {
-        display: none;
-      }
-
       /* Swarm count, sitting on the avatar disc. */
       .avatar-score {
         position: absolute;
@@ -1306,10 +1298,13 @@
                 <path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" />
               </svg>
             </span>
+            <!-- Matches Player.MaxNameLength so the field can't accept
+                 characters the server will silently drop. The server does the
+                 real enforcing; this only keeps the two in step. -->
             <input
               id="displayName"
               type="text"
-              maxlength="20"
+              maxlength="16"
               placeholder="Optional"
             />
           </div>
@@ -1373,7 +1368,6 @@
       <div class="game-column">
         <div id="voiceBar" class="voice-bar chamfered">
           <div id="avatarBar" class="avatar-bar"></div>
-          <div id="scoreboard" class="scoreboard-hud"></div>
           <div class="voice-controls">
             <!-- Only shown mid-match, when the setup panel is collapsed: keeps
                  the room code reachable and lets the panel be summoned back. -->
