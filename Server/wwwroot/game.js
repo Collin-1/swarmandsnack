@@ -47,13 +47,13 @@
   const rulesModal = document.getElementById("rulesModal");
   const closeRulesBtn = document.getElementById("closeRulesBtn");
   const mobileControls = document.getElementById("mobileControls");
-  const scoreboardEl = document.getElementById("scoreboard");
   const startBtn = document.getElementById("startBtn");
   const avatarBarEl = document.getElementById("avatarBar");
   const micBtn = document.getElementById("micBtn");
   const micIconEl = document.getElementById("micIcon");
   const micLabelEl = document.getElementById("micLabel");
   const voiceStatusEl = document.getElementById("voiceStatus");
+  const voiceWaveEl = document.getElementById("voiceWave");
   const audioBtn = document.getElementById("audioBtn");
   const audioIconEl = document.getElementById("audioIcon");
   const audioVolumeEl = document.getElementById("audioVolume");
@@ -62,6 +62,11 @@
   const minimapCanvas = document.getElementById("minimap");
   const matchClockEl = document.getElementById("matchClock");
   const phaseBannerEl = document.getElementById("phaseBanner");
+  const scoreLineEl = document.getElementById("scoreLine");
+  const roomTagEl = document.getElementById("roomTag");
+  const statPlayersEl = document.getElementById("statPlayers");
+  const statTimeEl = document.getElementById("statTime");
+  const statPingEl = document.getElementById("statPing");
 
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
@@ -140,13 +145,14 @@
   }
 
   /**
-   * Hides create/join while a room is in progress, and brings them back the
-   * moment it is over.
+   * Hides create/join while you are in a live room, and brings them back once
+   * the match is over so you can go somewhere else.
    *
-   * These two things have to be separate from the invite link. Tying them
-   * together meant the class was set when a room was entered and never cleared,
-   * because nothing ever set the invite link back to empty — so once a match
-   * finished, a player had no way to join a different game short of reloading.
+   * The caller derives this from state on every snapshot rather than flipping it
+   * on events. Two bugs came from doing it the other way: hanging it off the
+   * invite link meant it was set on entering a room and never cleared, and
+   * flipping it on GameOver meant a rematch left the controls on screen for the
+   * whole next match.
    */
   function setRoomControls(inRoom) {
     document.body.classList.toggle("in-room", !!inRoom);
@@ -164,17 +170,29 @@
     roomCodeInput.value = code;
   }
 
-  function showOverlay(content, isHtml = false) {
-    if (isHtml) {
-      overlayMessageEl.innerHTML = content;
-    } else {
+  /**
+   * `content` is either a plain string or a list of elements to mount. There is
+   * deliberately no markup path: the only rich overlay is the victory card, and
+   * it interpolates a player-supplied display name. Building it out of nodes
+   * means a name can never be anything but text on screen.
+   */
+  function showOverlay(content) {
+    overlayMessageEl.replaceChildren();
+    if (typeof content === "string") {
       overlayMessageEl.textContent = content;
+    } else {
+      for (const node of [].concat(content)) {
+        if (node) overlayMessageEl.appendChild(node);
+      }
     }
     overlayEl.classList.remove("hidden");
   }
 
   function hideOverlay() {
     overlayEl.classList.add("hidden");
+    // The crest animates on its own rAF loop; a hidden overlay must not keep
+    // driving frames behind the game.
+    stopVictoryCrest();
   }
 
   function resetSnapshotPipeline() {
@@ -243,7 +261,6 @@
       lobbyCount = 1;
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
-      setRoomControls(true);
       hideOverlay();
       updateStatusFromState(serverState);
     });
@@ -257,7 +274,6 @@
       serverState = createEmptyState();
       needsLeaderSnap = true; // adopt our room spawn from the first snapshot
       setInviteLink(roomId);
-      setRoomControls(true);
       hideOverlay();
       updateStatusFromState(serverState);
       connection.invoke("RequestState").catch(console.error);
@@ -402,10 +418,6 @@
       // Ensure state reflects game over so movement stops (truthy sentinel for a draw).
       serverState.winnerId = payload.winnerId || "__draw__";
 
-      // The match is finished, so joining a different game is a reasonable thing
-      // to want. Bring create/join and the room code field back.
-      setRoomControls(false);
-
       GameAudio.playTrack("victory");
 
       const winnerColor = winner ? paletteFor(winner.teamColor).leader : "#ffffff";
@@ -418,27 +430,40 @@
         setStatus(isDraw ? "Game Over! It's a draw." : "Game Over!");
       }
 
-      const bodyText = winner
-        ? `<strong style="color:${winnerColor}; text-shadow: 0 0 10px ${winnerColor};">${winner.displayName || winner.teamColor}</strong> devoured the swarm!`
-        : isDraw
-          ? "Everyone was devoured at once!"
-          : "Match complete!";
+      // A contained card rather than a full-bleed wash, with the winner's own
+      // creature sitting over its top edge — the result should look like a
+      // trophy plate, not a message printed across the game.
+      const title = document.createElement("h1");
+      title.className = "victory-title";
+      title.style.setProperty("--winner-color", winnerColor);
+      title.textContent = titleText;
 
-      const html = `
-        <div style="text-align: center;">
-            <h1 class="victory-title" style="--winner-color: ${winnerColor};" data-text="${titleText}">
-                ${titleText}
-            </h1>
-            <p style="font-size: 1.5rem; color: #cbd5e1; margin: 0;">
-                ${bodyText}
-            </p>
-            ${isHost ? "" : `<p style="color:#94a3b8; margin-top:1rem;">Waiting for the host to start a rematch…</p>`}
-        </div>
-      `;
+      const sub = document.createElement("p");
+      sub.className = "victory-sub";
+      if (winner) {
+        // The name is the one piece of this card that a player controls, so it
+        // goes in as text. Built as markup, a display name of
+        // `<img src=x onerror=…>` ran on every other player's machine.
+        const nameEl = document.createElement("strong");
+        nameEl.style.color = winnerColor;
+        nameEl.style.textShadow = `0 0 10px ${winnerColor}`;
+        nameEl.textContent = winner.displayName || winner.teamColor;
+        sub.append(nameEl, " devoured the swarm!");
+      } else {
+        sub.textContent = isDraw ? "Everyone was devoured at once!" : "Match complete!";
+      }
+
+      let note = null;
+      if (!isHost) {
+        note = document.createElement("p");
+        note.className = "victory-note";
+        note.textContent = "Waiting for the host to start a rematch…";
+      }
 
       // Only the host can trigger a rematch.
       if (restartBtn) restartBtn.style.display = isHost ? "" : "none";
-      showOverlay(html, true);
+      showOverlay([title, sub, note]);
+      paintVictoryCrest(winner ? winner.teamColor : null);
     });
 
     connection.on("MatchStarted", () => {
@@ -642,6 +667,14 @@
 
     lobbyCount = state.players?.length ?? lobbyCount;
     const inLobby = !state.isActive && !state.winnerId;
+
+    // Derived from state every snapshot rather than toggled on individual
+    // events. Event-driven, this kept going stale: a rematch fires MatchStarted
+    // but never JoinedGame, so once a finished match had revealed the controls
+    // they stayed on screen through the whole next game.
+    setRoomControls(!!roomId && !state.winnerId);
+    updateInfoRow(state);
+    updateStatusBar(state);
 
     setPlayingLayout(!!state.isActive);
     updateMatchClock(state);
@@ -1548,7 +1581,6 @@
     drawOffscreenMarkers(renderState);
     drawMinimap(renderState);
 
-    drawScoreboard(renderState);
     // Avatars follow the newest roster rather than the delayed render state.
     drawAvatars(serverState);
   }
@@ -2463,28 +2495,6 @@
     ctx.restore();
   }
 
-  let lastScoreboardHtml = null;
-
-  function drawScoreboard(state) {
-    if (!scoreboardEl) return;
-    let html = "";
-    if (state && state.players && state.players.length > 0) {
-      html = state.players
-        .map((player) => {
-          const color = paletteFor(player.teamColor).leader;
-          const name = player.displayName || player.teamColor;
-          const remaining = player.underlings?.length ?? 0;
-          return `<span style="color:${color};text-shadow:0 0 8px ${color}80">${name}: <strong>${remaining}</strong></span>`;
-        })
-        .join("");
-    }
-    // Runs every animation frame; only touch the DOM when the content changes.
-    if (html !== lastScoreboardHtml) {
-      lastScoreboardHtml = html;
-      scoreboardEl.innerHTML = html;
-    }
-  }
-
   // ---- Voice roster + avatars -------------------------------------------
 
   let lastVoiceRosterKey = null;
@@ -2607,6 +2617,8 @@
     }
     // Playback blocked outranks the mic state: the player is silently deaf and
     // any click fixes it, so tell them that rather than "Mic live".
+    if (voiceWaveEl) voiceWaveEl.classList.toggle("live", live);
+
     const status = VoiceClient.isAudioBlocked()
       ? "Click to enable sound"
       : VoiceClient.getStatus();
@@ -2991,6 +3003,161 @@
     panelToggle.addEventListener("click", () => {
       document.body.classList.toggle("panel-open");
     });
+  }
+
+  /**
+   * Draws the winner's own creature onto the victory card, reusing the same
+   * baked shell and orb the game renders. Building it from the real sprites
+   * rather than a picture of one means it always matches whatever the creatures
+   * currently look like.
+   */
+  let crestRaf = null;
+
+  function paintVictoryCrest(teamColor) {
+    const crest = document.getElementById("victoryCrest");
+    if (!crest) return;
+    stopVictoryCrest();
+
+    // A draw has no winner, so there is no creature to crown.
+    crest.classList.toggle("shown", !!teamColor);
+    if (!teamColor) return;
+
+    const colours = paletteFor(teamColor);
+    const g = crest.getContext("2d");
+    const half = crest.width / 2;
+    // The ordinary armoured leader, not the Apex form: dark plates with lit
+    // slots. The Apex variant floods every plate white, which washed the
+    // winner's own colour out of the crest entirely.
+    const shell = shellSprite(colours.leader, true, 0, false);
+    const orb = orbSprite(colours.leader, true);
+    const k = (half * 0.86) / (SPRITE_BAKE_RADIUS * SPRITE_GLOW_SCALE);
+    const orbR = SPRITE_BAKE_RADIUS * k * ORB_RATIO;
+    const eyeR = orbR * 0.46;
+    const started = performance.now();
+
+    const frame = (now) => {
+      const t = now - started;
+      g.clearRect(0, 0, crest.width, crest.height);
+
+      // Idle bob, and the armour ring turning slowly under it — the shell is a
+      // separate sprite from the orb, so it can rotate while the body stays
+      // upright and lit from the same direction.
+      const bob = Math.sin(t / 620) * 3.5;
+      const cx = half;
+      const cy = half + bob;
+
+      g.save();
+      g.translate(cx, cy);
+      g.rotate(t / 3400);
+      g.scale(k, k);
+      g.drawImage(shell, -shell.width / 2, -shell.height / 2);
+      g.restore();
+
+      g.save();
+      g.translate(cx, cy);
+      g.scale(k, k);
+      g.drawImage(orb, -orb.width / 2, -orb.height / 2);
+      g.restore();
+
+      // A blink every few seconds, so it reads as alive rather than a logo.
+      const cycle = t % 3800;
+      const blink = cycle > 3620 ? Math.min(1, (cycle - 3620) / 90) : 0;
+      const lidded = blink > 0 ? 1 - Math.abs(1 - blink * 2) : 0;
+      const openness = 1 - lidded;
+
+      g.fillStyle = "rgba(3,8,18,0.5)";
+      g.beginPath(); g.arc(cx, cy, eyeR * 1.16, 0, Math.PI * 2); g.fill();
+
+      if (openness > 0.05) {
+        g.save();
+        g.translate(cx, cy);
+        g.scale(1, openness);
+        g.fillStyle = "#f4f8ff";
+        g.beginPath(); g.arc(0, 0, eyeR, 0, Math.PI * 2); g.fill();
+        g.fillStyle = "#0b1020";
+        g.beginPath(); g.arc(0, 0, eyeR * 0.46, 0, Math.PI * 2); g.fill();
+        g.fillStyle = "rgba(255,255,255,0.62)";
+        g.beginPath();
+        g.arc(-eyeR * 0.34, -eyeR * 0.4, eyeR * 0.26, 0, Math.PI * 2);
+        g.fill();
+        g.restore();
+      } else {
+        // Closed: a dark seam where the eye was.
+        g.strokeStyle = "rgba(8,14,26,0.9)";
+        g.lineWidth = 2;
+        g.beginPath(); g.moveTo(cx - eyeR, cy); g.lineTo(cx + eyeR, cy); g.stroke();
+      }
+
+      crestRaf = requestAnimationFrame(frame);
+    };
+    crestRaf = requestAnimationFrame(frame);
+  }
+
+  function stopVictoryCrest() {
+    if (crestRaf !== null) {
+      cancelAnimationFrame(crestRaf);
+      crestRaf = null;
+    }
+  }
+
+  let lastScoreKey = null;
+  let lastStatusKey = null;
+
+  // Scores on the left of the info row, in each player's own colour. Dead
+  // players stay listed but greyed, so the field's shape stays readable.
+  function updateInfoRow(state) {
+    if (roomTagEl && roomTagEl.textContent !== (roomId || "—")) {
+      roomTagEl.textContent = roomId || "—";
+    }
+    if (!scoreLineEl) return;
+
+    const players = state.players ?? [];
+    const key = players.map((p) => `${p.displayName}:${p.eaten}:${p.isDead}:${p.isSuper}`).join("|");
+    if (key === lastScoreKey) return;
+    lastScoreKey = key;
+
+    scoreLineEl.innerHTML = "";
+    players.forEach((player, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = "|";
+        scoreLineEl.appendChild(sep);
+      }
+      const span = document.createElement("span");
+      const colours = paletteFor(player.teamColor);
+      span.style.color = player.isDead ? "#475569" : colours.leader;
+      const mark = player.isSuper ? " ⚡" : player.isDead ? " ✕" : "";
+      span.textContent = `${player.displayName}: ${player.eaten ?? 0}${mark}`;
+      scoreLineEl.appendChild(span);
+    });
+  }
+
+  function updateStatusBar(state) {
+    const players = state.players ?? [];
+    const alive = players.filter((p) => !p.isDead).length;
+    const playersText = `${alive} / ${players.length || 0}`;
+
+    // Match time is the hunt clock while hunting; gathering has no deadline, so
+    // it shows the round instead of a countdown that is not counting.
+    let timeText;
+    if (!state.isActive) {
+      timeText = "--:--";
+    } else if (state.phase === "hunting") {
+      const left = Math.max(0, Math.ceil(state.huntSecondsRemaining ?? 0));
+      timeText = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    } else {
+      timeText = `Round ${state.roundNumber ?? 1}`;
+    }
+
+    const pingText = currentLatency > 0 ? `${Math.round(currentLatency * 1000)}ms` : "—";
+
+    const key = `${playersText}|${timeText}|${pingText}`;
+    if (key === lastStatusKey) return;
+    lastStatusKey = key;
+    if (statPlayersEl) statPlayersEl.textContent = playersText;
+    if (statTimeEl) statTimeEl.textContent = timeText;
+    if (statPingEl) statPingEl.textContent = pingText;
   }
 
   let lastClockText = null;

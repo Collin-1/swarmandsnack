@@ -134,26 +134,26 @@ public class GameHub : Hub
         }
     }
 
-    public async Task Move(string direction)
+    public Task Move(string direction)
     {
         if (!ConnectionRooms.TryGetValue(Context.ConnectionId, out var roomId))
         {
-            return;
+            return Task.CompletedTask;
         }
 
         var parsedDirection = ParseDirection(direction);
         if (!_gameManager.TryRegisterMove(roomId, Context.ConnectionId, parsedDirection))
         {
             _logger.LogDebug("Move ignored for player {Player} not found in room {Room}", Context.ConnectionId, roomId);
-            return;
         }
 
-        await Clients.Group(roomId).SendAsync("PlayerMoved", new
-        {
-            playerId = Context.ConnectionId,
-            direction = parsedDirection.ToString().ToLowerInvariant(),
-            roomId
-        });
+        // Movement intent is recorded and nothing else. This used to also
+        // broadcast a PlayerMoved message to the whole room — which no client
+        // ever listened for, so every keypress fanned out to every player for no
+        // effect. It also made Move an amplifier: one connection spamming it
+        // multiplied its own traffic by the room size. The 33Hz state feed
+        // already carries movement.
+        return Task.CompletedTask;
     }
 
     public async Task RequestState()
